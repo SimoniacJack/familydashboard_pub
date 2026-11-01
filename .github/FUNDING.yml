@@ -1,0 +1,6 @@
+# GitHub "Sponsor" button config. Replace YOUR_USERNAME with your handle.
+# Buy Me a Coffee: the handle from your page URL (buymeacoffee.com/<handle>).
+custom: ["https://www.buymeacoffee.com/YOUR_USERNAME"]
+
+# If you also use GitHub Sponsors, add your username here:
+# github: [YOUR_GITHUB_USERNAME]
