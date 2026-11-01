@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+key_name = "your-ec2-keypair-name"
+ssh_cidr = "YOUR.IP.ADDR.HERE/32"   # lock SSH to your own IP
+
+# App secrets (same values as git.env)
+openai_api_key          = "sk-..."
+google_calendar_api_key = "..."
+google_calendar_id      = "you@example.com"
+todoist_api_token       = "..."
+db_password             = "pick-a-strong-password"

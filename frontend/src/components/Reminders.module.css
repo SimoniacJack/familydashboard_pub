@@ -1,0 +1,130 @@
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.heading {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* ── XY grid: rows = people, columns = morning/evening/anytime ───────────── */
+
+.grid {
+  display: grid;
+  gap: 6px;
+  align-items: start;
+}
+
+.corner {
+  /* top-left empty cell */
+}
+
+.colHead {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  padding: 0.3rem 0.2rem;
+  text-align: center;
+}
+
+.rowHead {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius);
+}
+
+.avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(255,255,255,0.6);
+  flex-shrink: 0;
+}
+
+.avatarFallback {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.9rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.rowName {
+  font-family: var(--font-head);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px;
+  min-height: 40px;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.4rem;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: background 0.1s;
+}
+
+.item:hover { background: var(--color-surface-alt); }
+
+.checkbox {
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: white;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.itemDone .checkbox {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.itemLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.2;
+}
+
+.itemDone .itemLabel {
+  text-decoration: line-through;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}

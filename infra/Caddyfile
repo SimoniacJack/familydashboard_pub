@@ -1,0 +1,11 @@
+# Caddy reverse proxy — auto-provisions a Let's Encrypt cert for the domain,
+# gates the whole app behind HTTP basic auth, and proxies to the Flask app.
+# {$APP_DOMAIN} is filled from the environment at runtime.
+{$APP_DOMAIN} {
+	basic_auth {
+		# Generate a hash with:  caddy hash-password --plaintext 'your-password'
+		# Then set BASIC_AUTH_USER / BASIC_AUTH_HASH in your environment.
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+	reverse_proxy app:5000
+}

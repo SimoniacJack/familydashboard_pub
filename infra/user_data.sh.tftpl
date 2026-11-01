@@ -1,0 +1,91 @@
+#!/bin/bash
+set -euxo pipefail
+
+# ── Install Docker + compose plugin + jq + awscli ───────────────────────────
+apt-get update
+apt-get install -y docker.io docker-compose-v2 jq unzip curl
+systemctl enable --now docker
+
+curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscli.zip
+unzip -q /tmp/awscli.zip -d /tmp
+/tmp/aws/install
+
+mkdir -p /opt/app
+
+# ── Fetch app secrets from Secrets Manager → /opt/app/.env ──────────────────
+SECRET=$(aws secretsmanager get-secret-value --region ${region} --secret-id ${secret_name} --query SecretString --output text)
+echo "$SECRET" | jq -r 'to_entries[] | "\(.key)=\(.value)"' > /opt/app/.env
+DB_PASSWORD=$(echo "$SECRET" | jq -r '.DB_PASSWORD')
+
+# ── Log in to ECR and pull the app image ────────────────────────────────────
+REGISTRY=$(echo "${image_uri}" | cut -d/ -f1)
+aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin "$REGISTRY"
+docker pull ${image_uri}
+
+APP_DOMAIN=$(echo "$SECRET" | jq -r '.APP_DOMAIN // empty')
+BASIC_AUTH_USER=$(echo "$SECRET" | jq -r '.BASIC_AUTH_USER // "admin"')
+BASIC_AUTH_HASH=$(echo "$SECRET" | jq -r '.BASIC_AUTH_HASH')
+
+# Caddy config: automatic HTTPS + basic auth, reverse-proxied to the app.
+# Credentials come from the app secret, never baked into the repo.
+cat > /opt/app/Caddyfile <<CADDY
+$APP_DOMAIN {
+    basic_auth {
+        $BASIC_AUTH_USER $BASIC_AUTH_HASH
+    }
+    reverse_proxy app:5000
+}
+CADDY
+
+# ── Production compose: caddy + app (from ECR) + postgres ───────────────────
+cat > /opt/app/docker-compose.prod.yml <<COMPOSE
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: familydash
+      POSTGRES_PASSWORD: "$DB_PASSWORD"
+      POSTGRES_DB: familydashboard
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U familydash -d familydashboard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    image: ${image_uri}
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: /opt/app/.env
+    environment:
+      DATABASE_URL: "postgresql+psycopg://familydash:$DB_PASSWORD@db:5432/familydashboard"
+    expose:
+      - "5000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    depends_on:
+      - app
+    environment:
+      APP_DOMAIN: "$APP_DOMAIN"
+    volumes:
+      - /opt/app/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "80:80"
+      - "443:443"
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:
+COMPOSE
+
+docker compose -f /opt/app/docker-compose.prod.yml up -d

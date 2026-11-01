@@ -1,0 +1,1103 @@
+/* ── Page ────────────────────────────────────────────────────────────────── */
+
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 1rem 1.25rem 2rem;
+  gap: 1rem;
+  max-width: 100%;
+  transition: background 0.2s;
+}
+
+/* When not viewing today, tint the whole page so it's obvious */
+.pageOffToday {
+  background: #f6dcc7;
+}
+
+.pageOffToday::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  border: 7px solid var(--pastel-peach-ink);
+  box-shadow: inset 0 0 0 2px var(--pastel-peach);
+  pointer-events: none;
+  z-index: 50;
+}
+
+/* Floating pill — overlays the page without shifting any layout */
+.offTodayBanner {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: var(--pastel-peach);
+  color: var(--pastel-peach-ink);
+  border-radius: var(--radius-pill);
+  padding: 0.4rem 0.5rem 0.4rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+}
+
+.backToTodayBtn {
+  border: none;
+  background: var(--pastel-peach-ink);
+  color: white;
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.backToTodayBtn:hover { filter: brightness(1.05); }
+
+/* ── Date/time banner ────────────────────────────────────────────────────── */
+
+.dateBanner {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  padding-bottom: 0.25rem;
+}
+
+.dateBlock {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.bannerDay {
+  font-family: var(--font-head);
+  font-size: 2.4rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.bannerDate {
+  font-family: var(--font-head);
+  font-size: 1.3rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.bannerClock {
+  font-family: var(--font-head);
+  font-size: 2.4rem;
+  font-weight: 600;
+  color: var(--color-primary);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Controls row ────────────────────────────────────────────────────────── */
+
+.pageHeader {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.weekNav {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.navBtn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.navBtn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+.todayBtn {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-radius: var(--radius-pill);
+  padding: 0.3rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.todayBtn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+.weekLabel {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-left: 0.4rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.thisWeekTag {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-pill);
+  padding: 2px 8px;
+}
+
+.memberPills {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.memberPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.22rem 0.7rem 0.22rem 0.3rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+
+.memberPill:hover { filter: brightness(0.97); }
+
+.pillActive {
+  border-color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.pillDimmed {
+  opacity: 0.4;
+}
+
+.clearFilterBtn {
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-pill);
+  padding: 0.22rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+.clearFilterBtn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+
+.pillAvatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: rgba(255,255,255,0.6);
+}
+
+.pillDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-left: 4px;
+}
+
+.mealActions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+/* ── Banners ─────────────────────────────────────────────────────────────── */
+
+.errorBanner,
+.successBanner {
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.errorBanner {
+  background: #fbeae6;
+  border: 1px solid #f0cdc4;
+  color: #b4604c;
+}
+
+.successBanner {
+  background: var(--color-primary-soft);
+  border: 1px solid #cfe0d4;
+  color: var(--color-primary-dark);
+}
+
+.loadingText {
+  color: var(--color-text-muted);
+  text-align: center;
+  padding: 3rem;
+  font-family: var(--font-head);
+}
+
+/* ── Background refresh indicator ────────────────────────────────────────── */
+
+.progressBar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 100%;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--color-primary) 50%,
+    transparent 100%);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: slide 1s ease-in-out infinite;
+  z-index: 100;
+  pointer-events: none;
+}
+
+@keyframes slide {
+  0%   { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
+}
+
+.calendarRefreshing {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ── Calendar wrapper ────────────────────────────────────────────────────── */
+
+.calendarAndDetail {
+  display: flex;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  align-items: stretch;
+}
+
+/* Full-height week-scroll buttons flanking the calendar */
+.weekScrollBtn {
+  flex-shrink: 0;
+  width: 42px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  color: var(--color-text-muted);
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+}
+
+.weekScrollBtn:hover {
+  background: var(--color-primary-soft);
+  color: var(--color-primary-dark);
+  border-color: var(--color-primary);
+}
+
+.weekScrollBtn:active { transform: scale(0.97); }
+
+.calendarOuter {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+  transition: opacity 0.15s ease;
+}
+
+.belowCalendar {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+  flex-shrink: 0;
+}
+
+.choresSection {
+  border-top: 1px solid var(--color-border);
+  padding-top: 1.5rem;
+}
+
+/* ── Main grid ───────────────────────────────────────────────────────────── */
+
+.calendarGrid {
+  display: grid;
+  grid-template-columns: 52px repeat(7, 1fr);
+  grid-template-rows: auto auto 1fr;
+  overflow-x: auto;
+}
+
+.timeGutter {
+  grid-row: 1;
+  grid-column: 1;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}
+
+.allDayGutter {
+  grid-row: 2;
+  grid-column: 1;
+  font-size: 0.55rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+  text-align: right;
+  padding: 5px 5px 0 0;
+  border-right: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  line-height: 1.1;
+}
+
+/* ── Day headers ─────────────────────────────────────────────────────────── */
+
+.dayWrapper {
+  grid-row: 1;
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.dayHeader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.5rem 0.3rem;
+  text-align: center;
+  gap: 1px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  position: relative;
+}
+
+.dayHeader:hover { background: var(--color-surface-alt); }
+
+/* today = faint persistent tint; selected = strong ring */
+.today.dayWrapper {
+  background: var(--color-primary-soft);
+}
+
+.selected.dayWrapper {
+  box-shadow: inset 0 -3px 0 var(--color-primary);
+}
+
+.selected .dayDate {
+  color: var(--color-primary-dark);
+}
+
+.todayPip {
+  font-size: 0.55rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-primary-dark);
+  background: var(--color-primary-soft);
+  border-radius: var(--radius-pill);
+  padding: 0 6px;
+  margin-top: 2px;
+}
+
+.selected .todayPip {
+  background: var(--color-primary);
+  color: white;
+}
+
+.dayName {
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-muted);
+}
+
+.dayDate {
+  font-family: var(--font-head);
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+
+.today .dayName { color: var(--color-primary-dark); }
+.today .dayDate { color: var(--color-primary-dark); }
+
+/* ── All-day strip ───────────────────────────────────────────────────────── */
+
+.allDayStrip {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px;
+  border-left: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  min-height: 30px;
+}
+
+.allDayEvent {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: var(--pastel-sky);
+  color: var(--pastel-sky-ink);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: filter 0.1s;
+}
+.allDayEvent:hover { filter: brightness(0.96); }
+
+.eventName {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.eventAvatarStack {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.eventAvatarStack > * + * {
+  margin-left: -6px; /* overlap when multiple */
+}
+
+/* All-day strip: slightly bigger inline avatars */
+.allDayAvatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex-shrink: 0;
+  border: 1.5px solid var(--color-surface);
+}
+
+.eventDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 1.5px solid var(--color-surface);
+}
+
+/* Timed events: avatars pinned to the top-right corner, larger */
+.eventAvatarCorner {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: inline-flex;
+  z-index: 2;
+}
+
+.eventAvatarCorner > * + * {
+  margin-left: -8px;
+}
+
+.cornerAvatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--color-surface);
+  box-shadow: 0 1px 3px rgba(60,50,40,0.15);
+}
+
+.cornerDot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-block;
+  border: 2px solid var(--color-surface);
+}
+
+/* ── Meal chips ──────────────────────────────────────────────────────────── */
+
+.mealChip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--pastel-peach);
+  color: var(--pastel-peach-ink);
+  transition: transform 0.08s, box-shadow 0.08s;
+  overflow: hidden;
+}
+
+.mealChip:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.chipSelected { box-shadow: 0 0 0 2px var(--color-primary) !important; }
+
+.chipGenerated { background: var(--pastel-peach); color: var(--pastel-peach-ink); }
+.chipAccepted  { background: var(--pastel-sage); color: var(--pastel-sage-ink); }
+.chipSkipped   { background: var(--color-surface-alt); color: var(--color-text-muted); opacity: 0.7; }
+.chipPending   { background: var(--color-surface-alt); color: var(--color-text-muted); opacity: 0.6; }
+
+.chipType { flex-shrink: 0; font-size: 0.75rem; }
+.chipName { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chipTick { flex-shrink: 0; font-weight: 800; }
+
+/* ── Time gutter ─────────────────────────────────────────────────────────── */
+
+.timeGutterCol {
+  grid-row: 3;
+  grid-column: 1;
+  position: relative;
+  border-right: 1px solid var(--color-border);
+}
+
+.hourLabel {
+  position: absolute;
+  right: 6px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  transform: translateY(-50%);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.halfHourLabel {
+  font-size: 0.55rem;
+  opacity: 0.6;
+}
+
+.halfHourLine {
+  border-top: 1px dashed var(--color-border);
+  background: transparent !important;
+  opacity: 0.6;
+}
+
+/* Mobile day navigation */
+.dayNav {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+/* ── Timed columns ───────────────────────────────────────────────────────── */
+
+.dayColumn {
+  grid-row: 3;
+  position: relative;
+  border-left: 1px solid var(--color-border);
+}
+
+.hourLine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--color-border);
+  pointer-events: none;
+}
+
+.timedEvent {
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  background: var(--pastel-lavender);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 3px 6px;
+  overflow: hidden;
+  cursor: pointer;
+  z-index: 1;
+  text-align: left;
+  font-family: inherit;
+  transition: filter 0.1s;
+}
+.timedEvent:hover { filter: brightness(0.96); }
+
+.timedEventTime {
+  display: block;
+  font-size: 0.62rem;
+  color: var(--pastel-lavender-ink);
+  font-weight: 700;
+}
+
+.timedEventName {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--pastel-lavender-ink);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-right: 24px; /* room for the corner avatar */
+}
+
+/* ── Meal detail panel ───────────────────────────────────────────────────── */
+
+.detailPanel {
+  width: 290px;
+  flex-shrink: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  overflow-y: auto;
+  align-self: flex-start;
+  max-height: 640px;
+  box-shadow: var(--shadow);
+}
+
+.detailHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.detailMealType {
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-primary);
+}
+
+.detailMealName {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 0.2rem;
+  line-height: 1.2;
+}
+
+.closeBtn {
+  background: none;
+  border: none;
+  font-size: 1rem;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.closeBtn:hover { color: var(--color-text); }
+
+.detailDesc {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.detailPrep {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.mutedText {
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.acceptedText {
+  color: var(--color-primary-dark);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+.ingredientsToggle {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-align: left;
+  font-weight: 700;
+}
+.ingredientsToggle:hover { text-decoration: underline; }
+
+.ingredients {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.5rem;
+}
+
+.ingredients li { font-size: 0.82rem; }
+.qty { color: var(--color-text-muted); }
+
+.detailActions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-top: 0.25rem;
+}
+
+.rejectForm {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.rejectInput {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.875rem;
+  font-family: inherit;
+  width: 100%;
+}
+.rejectInput:focus { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btnPrimary,
+.btnSuccess,
+.btnSecondary {
+  border-radius: var(--radius-pill);
+  padding: 0.5rem 1.2rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.btnPrimary {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+}
+.btnPrimary:hover { background: var(--color-primary-dark); }
+.btnPrimary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnSuccess {
+  background: var(--pastel-sage);
+  color: var(--pastel-sage-ink);
+  border: none;
+}
+.btnSuccess:hover { filter: brightness(0.97); }
+.btnSuccess:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnSecondary {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-strong);
+}
+.btnSecondary:hover { background: var(--color-surface-alt); }
+
+.btnAccept,
+.btnReject,
+.btnSkip {
+  border-radius: var(--radius-pill);
+  padding: 0.4rem 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btnAccept {
+  background: var(--color-primary);
+  color: white;
+  border: none;
+}
+.btnAccept:hover { background: var(--color-primary-dark); }
+
+.btnReject {
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+.btnReject:hover { background: #fbeae6; }
+.btnReject:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btnSkip {
+  background: transparent;
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border-strong);
+}
+.btnSkip:hover { background: var(--color-surface-alt); }
+
+/* ── Lunch ideas section ─────────────────────────────────────────────────── */
+
+.lunchSection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+
+.lunchHeading {
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.lunchSub {
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.lunchGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.lunchCard {
+  width: 250px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 0.85rem 0.95rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.lunchAccepted {
+  background: var(--color-primary-soft);
+  border-color: transparent;
+}
+
+.lunchTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.lunchName {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.lunchPrep {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.lunchDesc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  line-height: 1.45;
+}
+
+.lunchIngredients {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  border-top: 1px solid var(--color-border);
+  padding-top: 0.4rem;
+}
+
+.lunchIngredients li {
+  font-size: 0.74rem;
+  color: var(--color-text);
+}
+
+/* ── Event assignment picker ─────────────────────────────────────────────── */
+
+.assignOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(45, 42, 38, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.assignModal {
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 40px rgba(45, 42, 38, 0.2);
+  padding: 1.25rem 1.4rem;
+  width: 360px;
+  max-width: calc(100vw - 2rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.assignHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.assignTitle {
+  font-family: var(--font-head);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.eventMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.eventTime {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-primary-dark);
+}
+
+.eventDesc {
+  font-size: 0.82rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.assignLabel {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.assignOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.assignOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.8rem 0.3rem 0.35rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.85rem;
+  font-weight: 700;
+  border: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  background: var(--color-surface-alt);
+  color: var(--color-text-muted);
+}
+.assignOption:hover { filter: brightness(0.97); }
+
+.assignOptionActive {
+  border-color: var(--color-text);
+}
+
+.assignAvatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.assignCheck {
+  font-weight: 800;
+  margin-left: 2px;
+}
+
+.assignActions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.assignReset {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+  margin-left: auto;
+}
+.assignReset:hover { text-decoration: underline; }
+
+/* ── Mobile (phone) tweaks ───────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  /* Member filter pills: one horizontal scrolling row, not a vertical stack */
+  .memberPills {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    flex: none;
+    padding-bottom: 2px;
+  }
+  .memberPill {
+    flex: 0 0 auto;
+  }
+
+  /* Header stacks; keep controls tidy */
+  .pageHeader {
+    gap: 0.6rem;
+  }
+
+  /* Side scroll buttons a touch narrower on phone */
+  .weekScrollBtn {
+    width: 34px;
+  }
+}

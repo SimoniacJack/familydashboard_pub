@@ -1,0 +1,13 @@
+.git
+.venv
+**/__pycache__
+**/*.pyc
+frontend/node_modules
+frontend/dist
+backend/alembic/__pycache__
+git.env
+*.env
+.kiro
+docs
+food images
+node_modules

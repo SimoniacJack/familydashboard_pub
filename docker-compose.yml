@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: familydash
+      POSTGRES_PASSWORD: familydash
+      POSTGRES_DB: familydashboard
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U familydash -d familydashboard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://familydash:familydash@db:5432/familydashboard
+      # Secrets — in production these come from AWS Secrets Manager, injected as
+      # env vars. For local compose, pass them through from your shell/git.env.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GOOGLE_CALENDAR_API_KEY: ${GOOGLE_CALENDAR_API_KEY:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-}
+      TODOIST_API_TOKEN: ${TODOIST_API_TOKEN:-}
+    ports:
+      - "8080:5000"
+
+volumes:
+  pgdata:

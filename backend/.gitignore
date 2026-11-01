@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Runtime data files live directly under data/ (legacy JSON state). Ignore those,
+# but keep the data/ directory and the _migrated_json/ seed snapshot tracked.
+/data/*.json
+!/data/_migrated_json/

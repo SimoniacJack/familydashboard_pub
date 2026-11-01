@@ -1,0 +1,64 @@
+# Environment files
+*.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+**/node_modules/
+.venv/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Misc
+.cache/
+coverage/
+
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/terraform.tfstate
+infra/terraform.tfstate.*
+infra/terraform.tfvars
+infra/tfplan
+
+# SSH keys — never commit
+*.pem
+*.key
+
+# Scratch / reference images (not part of the app)
+image.png
+referenceimage.png
+food images/
+.kiro/
+familymembers/*
+!familymembers/.gitkeep
+!familymembers/example-adult.md
+!familymembers/example-child.md
+
+# Internal handoff notes (not for public repo)
+docs/session-handoff.md
+
+# Real exported seed data (ship your own; example set is tracked)
+backend/data/_migrated_json/
+backend/data/_migrated_json/**
+backend/data/*.json
+!backend/data/example/
