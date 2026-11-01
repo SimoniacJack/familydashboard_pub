@@ -3,7 +3,7 @@
 .page {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
   padding: 1rem 1.25rem 2rem;
   gap: 1rem;

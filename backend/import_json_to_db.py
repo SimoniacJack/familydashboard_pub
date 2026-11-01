@@ -24,23 +24,28 @@ ROOMS = [
     ("kitchen", "Kitchen", "downstairs", 1),
     ("hall", "Hall", "downstairs", 2),
     ("living_room", "Living room", "downstairs", 3),
-    ("bathroom_down", "Bathroom", "downstairs", 4),
-    ("office", "Office", "downstairs", 5),
-    ("bedroom_1", "Bedroom 1", "upstairs", 6),
-    ("bedroom_2", "Bedroom 2", "upstairs", 7),
-    ("bedroom_3", "Bedroom 3", "upstairs", 8),
-    ("main_bedroom", "Main bedroom", "upstairs", 9),
-    ("bathroom_up", "Bathroom", "upstairs", 10),
+    ("nook", "Nook", "downstairs", 4),
+    ("bathroom_down", "Bathroom", "downstairs", 5),
+    ("office", "Office", "downstairs", 6),
+    ("ada_bedroom", "Ada bedroom", "upstairs", 7),
+    ("rafe_bedroom", "Rafe bedroom", "upstairs", 8),
+    ("kit_bedroom", "Kit bedroom", "upstairs", 9),
+    ("parents_bedroom", "Parents bedroom", "upstairs", 10),
+    ("en_suite", "En suite", "upstairs", 11),
+    ("kids_bathroom", "Kids bathroom", "upstairs", 12),
 ]
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Seed JSON. Ship your own under data/ ; an example set lives in data/example/.
+# Seed JSON was archived here after the Postgres migration.
 DATA = os.path.join(HERE, "data", "_migrated_json")
 if not os.path.isdir(DATA):
-    DATA = os.path.join(HERE, "data", "example")
-if not os.path.isdir(DATA):
-    DATA = os.path.join(HERE, "data")
+    DATA = os.path.join(HERE, "data")  # fallback to legacy location
 MEMBERS_DIR = os.path.join(HERE, "..", "familymembers")
+
+# Signature pastel per member (mirrors frontend memberColors.js)
+MEMBER_COLOR = {
+    "jack": "sky", "hannah": "pink", "rafe": "sage", "ada": "lavender", "kit": "butter",
+}
 
 
 def load_json(name):
@@ -53,7 +58,11 @@ def load_json(name):
 
 def import_members(session):
     for fp in sorted(glob.glob(os.path.join(MEMBERS_DIR, "*.md"))):
-        mid = os.path.splitext(os.path.basename(fp))[0].lower()
+        base = os.path.basename(fp)
+        # Skip docs and example templates — they are not real members.
+        if base.lower() == "readme.md" or base.lower().startswith("example-"):
+            continue
+        mid = os.path.splitext(base)[0].lower()
         with open(fp, encoding="utf-8") as f:
             content = f.read()
         role = "adult" if "**Role**: Adult" in content else "child"
@@ -68,7 +77,8 @@ def import_members(session):
             id=mid,
             name=mid.capitalize(),
             role=role,
-            color="",  # set per-member in-app; frontend auto-assigns a fallback
+            color=MEMBER_COLOR.get(mid, ""),
+            # Local path for now — becomes an S3 URL after AWS migration.
             markdown_url=f"familymembers/{os.path.basename(fp)}",
             image_url=image,
         ))
@@ -102,12 +112,15 @@ def import_reminders(session):
     data = load_json("reminders.json") or {}
     for r in data.get("reminders", []):
         label = r["label"]
-        routines = r.get("routines") or ["morning"]
-        # A reminder may recur in more than one routine (e.g. ["morning","evening"]).
-        for i, routine in enumerate(routines):
-            rid = r["id"] if i == 0 else f"{r['id']}-{routine}"
-            session.merge(Reminder(id=rid, member=(r.get("member") or None),
-                                   label=label, routine=routine, is_active=True))
+        # Feed Toby happens twice a day (morning + evening); everything else morning.
+        if label == "Feed Toby":
+            session.merge(Reminder(id=r["id"], member=(r.get("member") or None),
+                                   label=label, routine="morning", is_active=True))
+            session.merge(Reminder(id=r["id"] + "-evening", member=(r.get("member") or None),
+                                   label=label, routine="evening", is_active=True))
+        else:
+            session.merge(Reminder(id=r["id"], member=(r.get("member") or None),
+                                   label=label, routine="morning", is_active=True))
     print(f"  {len(data.get('reminders', []))} reminders imported")
 
 

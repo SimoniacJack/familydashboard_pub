@@ -74,12 +74,17 @@
 
 .item {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem;
+  flex-direction: column;
+  gap: 0.3rem;
   padding: 0.25rem 0.45rem;
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
+}
+
+.itemMain {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .item:hover {
@@ -91,21 +96,168 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.removeBtn {
   background: none;
   border: none;
-  color: var(--color-text-muted);
-  font-size: 0.7rem;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  opacity: 0;
-  padding: 2px;
-  line-height: 1;
 }
 
-.item:hover .removeBtn { opacity: 1; }
-.removeBtn:hover { color: var(--color-danger); }
+.itemName:hover {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+.counter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.stepBtn {
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  width: 20px;
+  height: 20px;
+  font-size: 0.85rem;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stepBtn:hover:not(:disabled) { border-color: var(--color-primary); color: var(--color-primary); }
+.stepBtn:disabled { opacity: 0.35; cursor: default; }
+
+.countVal {
+  min-width: 20px;
+  text-align: center;
+  font-size: 0.82rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.countOut { color: var(--color-danger); }
+
+.reserved {
+  font-size: 0.68rem;
+  color: var(--color-text-muted);
+  padding-left: 0.1rem;
+}
+
+.levels {
+  display: flex;
+  gap: 2px;
+}
+
+.levelBtn {
+  flex: 1;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  padding: 2px 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.levelBtn:hover { border-color: var(--color-border-strong); }
+
+.levelActive.lv_full,
+.levelActive.lv_ok {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-surface);
+}
+
+.levelActive.lv_low,
+.levelActive.lv_out {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-surface);
+}
+
+.modeRow {
+  display: flex;
+  gap: 2px;
+  margin-top: 0.25rem;
+}
+
+.modeTab {
+  flex: 1;
+  background: var(--color-surface-alt);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  padding: 2px 0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modeTab:hover { border-color: var(--color-border-strong); }
+
+.modeTabOn {
+  background: var(--color-text-muted);
+  border-color: var(--color-text-muted);
+  color: var(--color-surface);
+}
+
+.qtyRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-top: 0.4rem;
+}
+
+.qtyInput {
+  width: 64px;
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  font-family: inherit;
+  text-align: center;
+}
+
+.addActions {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+}
+
+.saveBtn {
+  flex: 1;
+  background: var(--color-primary);
+  color: var(--color-surface);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.3rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancelBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.6rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
 
 .emptyItem {
   font-size: 0.72rem;
@@ -127,6 +279,30 @@
   font-family: inherit;
 }
 
+.cardActions {
+  display: flex;
+  gap: 0.4rem;
+  margin: 0.2rem 0.5rem 0.55rem;
+}
+
+.cardActions .addBtn {
+  margin: 0;
+  flex: 1;
+}
+
+.scanBtn {
+  background: var(--color-primary);
+  border: none;
+  color: var(--color-surface);
+  border-radius: var(--radius-pill);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scanBtn:hover { filter: brightness(1.05); }
+
 .addBtn {
   margin: 0.2rem 0.5rem 0.55rem;
   background: transparent;
@@ -142,4 +318,92 @@
 .addBtn:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
+}
+
+/* ── Item edit modal ───────────────────────────────────────────────── */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  width: 100%;
+  max-width: 320px;
+  padding: 0.9rem 1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.modalTitle {
+  font-family: var(--font-head);
+  font-size: 1rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modalClose {
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.modalClose:hover { color: var(--color-text); }
+
+.modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.modalLabel {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.modalHint {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.modalDanger {
+  background: transparent;
+  border: 1px solid var(--color-danger);
+  color: var(--color-danger);
+  border-radius: var(--radius-sm);
+  padding: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.modalDanger:hover {
+  background: var(--color-danger);
+  color: var(--color-surface);
 }

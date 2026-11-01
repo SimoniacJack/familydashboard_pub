@@ -1,4 +1,0 @@
-{ "chores": [
-  { "id": "dishes", "name": "Do the dishes", "frequency": "weekly", "assignable": "all" },
-  { "id": "bins", "name": "Take the bins out", "frequency": "weekly", "assignable": "all" }
-] }

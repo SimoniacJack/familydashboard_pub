@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import styles from './CalendarView.module.css'
 import Chores from './Chores.jsx'
-import Inventory from '../components/Inventory.jsx'
 import Reminders from '../components/Reminders.jsx'
+import DraftReviewPanel from '../components/DraftReviewPanel.jsx'
 import { memberColor, eventTitleWithoutMember } from '../memberColors.js'
 
 const MEMBERS_API = '/api/members'
@@ -40,6 +40,7 @@ export default function CalendarView() {
   const [rejectSlot, setRejectSlot] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [pushStatus, setPushStatus] = useState(null)
+  const [draft, setDraft] = useState(null) // {draft, used_gpt} once /draft returns -> opens review panel
   const [error, setError] = useState(null)
   const [selectedSlot, setSelectedSlot] = useState(null) // for detail popover
   const [members, setMembers] = useState([])
@@ -233,20 +234,23 @@ export default function CalendarView() {
     patchLunch(updated)
   }
 
+  // Step 1 of pushing the shopping list: reserve stock against accepted meals
+  // and fetch the DRAFT of what looks missing. Writes nothing to Todoist yet —
+  // the review panel does that on confirm.
   async function pushToTodoist() {
     setGenerating(true)
     setPushStatus(null)
     try {
-      const res = await fetch(`${MEALS_API}/shopping-list`, { method: 'POST' })
+      const res = await fetch('/api/shopping/draft', { method: 'POST' })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.detail || data.error)
-      const skipped = data.already_have?.length
-        ? ` (${data.already_have.length} already in stock, skipped)`
-        : ''
-      if (data.items_added === 0) {
-        setPushStatus(`✅ ${data.message || 'Nothing to buy — all in stock.'}`)
+      if (!res.ok) throw new Error(data.detail || data.error || `HTTP ${res.status}`)
+      const reserved = data.counts?.reserved || 0
+      if (!data.draft.length) {
+        setPushStatus(
+          `✅ Stock covers every meal${reserved ? ` — ${reserved} items reserved` : ''}. Nothing to buy.`
+        )
       } else {
-        setPushStatus(`✅ ${data.items_added} items pushed to Todoist: "${data.project}"${skipped}`)
+        setDraft(data) // opens the review panel
       }
     } catch (e) {
       setPushStatus(`❌ ${e.message}`)
@@ -255,11 +259,39 @@ export default function CalendarView() {
     }
   }
 
+  // Step 2: the draft panel confirmed (or failed). Report the result.
+  function onDraftConfirm(data, resolved, errMsg) {
+    setDraft(null)
+    if (errMsg) { setPushStatus(`❌ ${errMsg}`); return }
+    const extra = []
+    if (resolved?.matched) extra.push(`${resolved.matched} matched to stock`)
+    if (resolved?.added) extra.push(`${resolved.added} added to inventory`)
+    const suffix = extra.length ? ` (${extra.join(', ')})` : ''
+    setPushStatus(
+      data.added_count
+        ? `✅ ${data.added_count} items pushed to Todoist: "${data.project}"${suffix}`
+        : `✅ Nothing new to buy${suffix}.`
+    )
+  }
+
+  // Mark an accepted dinner cooked: consumes its reserved stock (count drops).
+  async function cook(slotId) {
+    setLoadingSlot(slotId)
+    const res = await fetch(`${MEALS_API}/${slotId}/cooked`, { method: 'POST' })
+    const data = await res.json()
+    if (res.ok && data.slot) patchSlot(data.slot)
+    const used = (data.consumed || []).filter(c => c.used > 0)
+    if (used.length) {
+      setPushStatus(`🍳 Cooked — used ${used.map(c => `${c.used}× ${c.name}`).join(', ')}`)
+    }
+    setLoadingSlot(null)
+  }
+
   const allSlots = week?.days?.flatMap(d => d.slots) ?? []
   const lunchIdeas = week?.lunch_ideas ?? []
   const hasSlots = week?.has_slots
   const pendingCount = allSlots.filter(s => s.status === 'pending' || s.status === 'generated').length
-  const dinnersResolved = hasSlots && allSlots.every(s => s.status === 'accepted' || s.status === 'skipped')
+  const dinnersResolved = hasSlots && allSlots.every(s => s.status === 'accepted' || s.status === 'skipped' || s.status === 'cooked')
   const anyLunchAccepted = lunchIdeas.some(l => l.status === 'accepted')
   // Ready to shop once dinners are sorted and at least one lunch is picked
   const allResolved = dinnersResolved && anyLunchAccepted
@@ -368,7 +400,7 @@ export default function CalendarView() {
             </button>
           )}
           {allResolved && (
-            <button className={styles.btnSuccess} onClick={pushToTodoist} disabled={generating}>
+            <button className={styles.btnSuccess} onClick={pushToTodoist} disabled={generating} data-testid="push-shopping">
               {generating ? 'Pushing…' : 'Push to Todoist'}
             </button>
           )}
@@ -385,6 +417,15 @@ export default function CalendarView() {
 
       {error && <p className={styles.errorBanner}>{error}</p>}
       {pushStatus && <p className={styles.successBanner}>{pushStatus}</p>}
+
+      {draft && (
+        <DraftReviewPanel
+          draft={draft.draft}
+          usedGpt={draft.used_gpt}
+          onConfirm={onDraftConfirm}
+          onCancel={() => setDraft(null)}
+        />
+      )}
 
       {/* Thin progress bar during background refreshes */}
       {refreshing && <div className={styles.progressBar} />}
@@ -576,6 +617,7 @@ export default function CalendarView() {
               onRejectCancel={() => setRejectSlot(null)}
               onRejectConfirm={() => reject(selectedSlot.id, rejectReason)}
               onRejectReasonChange={setRejectReason}
+              onCook={() => cook(selectedSlot.id)}
               onClose={() => setSelectedSlot(null)}
             />
           )}
@@ -597,9 +639,6 @@ export default function CalendarView() {
           </div>
           <div className={styles.choresSection}>
             <Chores filterMember={filterMember} selectedDate={selectedDate} />
-          </div>
-          <div className={styles.choresSection}>
-            <Inventory />
           </div>
         </div>
       )}
@@ -694,6 +733,7 @@ function MealChip({ slot, isLoading, onClick, isSelected }) {
 
   const chipClass = {
     accepted: styles.chipAccepted,
+    cooked:   styles.chipAccepted,
     skipped:  styles.chipSkipped,
     generated: styles.chipGenerated,
     pending:  styles.chipPending,
@@ -723,7 +763,7 @@ function MealChip({ slot, isLoading, onClick, isSelected }) {
 // ─── Meal detail panel (shown below the grid when a chip is clicked) ──────────
 
 function MealDetail({ slot, isLoading, isRejecting, rejectReason,
-  onAccept, onSkip, onRejectOpen, onRejectCancel, onRejectConfirm, onRejectReasonChange, onClose }) {
+  onAccept, onSkip, onRejectOpen, onRejectCancel, onRejectConfirm, onRejectReasonChange, onCook, onClose }) {
 
   const [showIngredients, setShowIngredients] = useState(false)
 
@@ -791,7 +831,16 @@ function MealDetail({ slot, isLoading, isRejecting, rejectReason,
       )}
 
       {slot.status === 'accepted' && (
-        <p className={styles.acceptedText}>✓ Accepted</p>
+        <div className={styles.detailActions}>
+          <span className={styles.acceptedText}>✓ Accepted</span>
+          <button className={styles.btnAccept} onClick={onCook} data-testid="mark-cooked">
+            🍳 Mark cooked
+          </button>
+        </div>
+      )}
+
+      {slot.status === 'cooked' && (
+        <p className={styles.acceptedText}>🍳 Cooked — stock used</p>
       )}
     </div>
   )

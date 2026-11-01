@@ -6,13 +6,16 @@ from models import EventAssignment, Member
 
 assignments_bp = Blueprint("assignments", __name__)
 
-# Optional map of Google Calendar event colour IDs (1–11) to member ids, used
-# as a fallback when an event has no name prefix or local override. Populate it
-# for your own members, or leave it empty to rely on name prefixes + overrides.
+# Map Google Calendar event colour IDs (1–11) to family member ids.
 #  1 Lavender, 2 Sage, 3 Grape, 4 Flamingo, 5 Banana,
 #  6 Tangerine, 7 Peacock, 8 Graphite, 9 Blueberry, 10 Basil, 11 Tomato
-# Example: {"9": "alex", "4": "sam"}
-COLOR_TO_MEMBER = {}
+COLOR_TO_MEMBER = {
+    "9": "jack",    # Blueberry
+    "4": "hannah",  # Flamingo
+    "10": "rafe",   # Basil
+    "3": "ada",     # Grape
+    "5": "kit",     # Banana
+}
 
 
 def _member_ids(session):

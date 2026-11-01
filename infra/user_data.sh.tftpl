@@ -23,15 +23,13 @@ aws ecr get-login-password --region ${region} | docker login --username AWS --pa
 docker pull ${image_uri}
 
 APP_DOMAIN=$(echo "$SECRET" | jq -r '.APP_DOMAIN // empty')
-BASIC_AUTH_USER=$(echo "$SECRET" | jq -r '.BASIC_AUTH_USER // "admin"')
-BASIC_AUTH_HASH=$(echo "$SECRET" | jq -r '.BASIC_AUTH_HASH')
 
 # Caddy config: automatic HTTPS + basic auth, reverse-proxied to the app.
-# Credentials come from the app secret, never baked into the repo.
+# The bcrypt $ chars are escaped so the shell leaves them literal.
 cat > /opt/app/Caddyfile <<CADDY
 $APP_DOMAIN {
     basic_auth {
-        $BASIC_AUTH_USER $BASIC_AUTH_HASH
+        parker \$2a\$14\$T1wVz3qsUtxMlWU6WRynMOZcDpsCfX9Lc6zcTq8T3HsMBDbelwAhe
     }
     reverse_proxy app:5000
 }

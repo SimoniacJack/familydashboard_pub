@@ -1,31 +1,22 @@
-// Each member gets a signature pastel used consistently across the app
-// (reminder dots, avatar rings, chore credit, etc.). A member's own colour
-// comes from the DB (/api/members); this palette is the fallback, assigned
-// deterministically by member id so the same person always gets the same hue.
-const PALETTE = [
-  { bg: 'var(--pastel-sky)',      ink: 'var(--pastel-sky-ink)' },
-  { bg: 'var(--pastel-pink)',     ink: 'var(--pastel-pink-ink)' },
-  { bg: 'var(--pastel-sage)',     ink: 'var(--pastel-sage-ink)' },
-  { bg: 'var(--pastel-lavender)', ink: 'var(--pastel-lavender-ink)' },
-  { bg: 'var(--pastel-butter)',   ink: 'var(--pastel-butter-ink)' },
-]
-
-function hashId(id) {
-  let h = 0
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0
-  return Math.abs(h)
+// Each family member gets a signature pastel used consistently across the app
+// (reminder dots, avatar rings, chore credit, etc.).
+export const MEMBER_COLORS = {
+  jack:   { bg: 'var(--pastel-sky)',      ink: 'var(--pastel-sky-ink)' },
+  hannah: { bg: 'var(--pastel-pink)',     ink: 'var(--pastel-pink-ink)' },
+  rafe:   { bg: 'var(--pastel-sage)',     ink: 'var(--pastel-sage-ink)' },
+  ada:    { bg: 'var(--pastel-lavender)', ink: 'var(--pastel-lavender-ink)' },
+  kit:    { bg: 'var(--pastel-butter)',   ink: 'var(--pastel-butter-ink)' },
 }
 
 export function memberColor(id) {
-  if (!id) return { bg: 'var(--color-surface-alt)', ink: 'var(--color-text-muted)' }
-  return PALETTE[hashId(id) % PALETTE.length]
+  return MEMBER_COLORS[id] || { bg: 'var(--color-surface-alt)', ink: 'var(--color-text-muted)' }
 }
 
 export function cap(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : s
 }
 
-// Event titles follow "[Person] - [Event]" e.g. "Sam - Swimming".
+// Event titles follow "[Person] - [Event]" e.g. "Ada - Beavers".
 // Returns the member id (lowercase first word) if it matches a known member,
 // else null. `memberIds` is the list of valid ids from /api/members.
 export function parseEventMember(summary, memberIds) {

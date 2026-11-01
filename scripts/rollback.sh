@@ -28,7 +28,7 @@ ok "rolled back to $TARGET"
 
 log "Health check"
 for i in $(seq 1 20); do
-  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u "${BASIC_AUTH_USER:-admin}:${BASIC_AUTH_PASS:-}" "$APP_URL/api/health" || true)
+  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$APP_URL/api/health" || true)
   if [ "$code" = "200" ]; then ok "healthy after rollback"; exit 0; fi
   sleep 3
 done

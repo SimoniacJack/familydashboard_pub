@@ -58,6 +58,12 @@ variable "db_password" {
 }
 
 variable "app_domain" {
-  description = "Domain name for the app (e.g. mydashboard.duckdns.org). Caddy provisions a Let's Encrypt cert for this."
+  description = "Domain name for the app (e.g. yourfamily.example.com). Caddy provisions a Let's Encrypt cert for this."
   type        = string
+}
+
+variable "backup_retention_days" {
+  description = "How many days to keep nightly DB backups in S3 before auto-expiry."
+  type        = number
+  default     = 30
 }

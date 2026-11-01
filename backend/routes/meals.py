@@ -6,8 +6,9 @@ import requests as http_requests
 from sqlalchemy import select
 
 from routes.inventory import get_stocked_names, normalise
+from routes.config import family_name
 from db import session_scope
-from models import MealSlot, LunchIdea
+from models import MealSlot, LunchIdea, MealIngredient
 from weeks import parse_date
 
 meals_bp = Blueprint("meals", __name__)
@@ -23,7 +24,27 @@ DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sun
 # ── Data helpers (DB-backed) ────────────────────────────────────────────────
 # read_data/write_data preserve the original JSON shape
 # ({slots, lunch_ideas, generated_at}) so the rest of this module and the
-# calendar route keep working unchanged — they just persist to Postgres now.
+# calendar route keep working unchanged. Meals are now relational: scalar fields
+# live in columns and ingredients in the meal_ingredients table, but the
+# serialized shape handed to the frontend is identical to the old JSON blob.
+
+def _ingredients_payload(owner):
+    """Serialize an owner's ingredient rows back to the [{item, quantity}] shape
+    the frontend and matcher expect, in position order."""
+    return [{"item": ing.item, "quantity": ing.quantity}
+            for ing in sorted(owner.ingredients, key=lambda i: i.position)]
+
+def _meal_payload(owner):
+    """Rebuild the `meal` dict (name/description/prep_minutes/ingredients) from
+    columns + ingredient rows. Returns None when the meal is empty (pending)."""
+    if owner.name is None and not owner.ingredients:
+        return None
+    return {
+        "name": owner.name,
+        "description": owner.description,
+        "prep_minutes": owner.prep_minutes,
+        "ingredients": _ingredients_payload(owner),
+    }
 
 def _slot_to_dict(s):
     date_obj = s.date
@@ -34,13 +55,13 @@ def _slot_to_dict(s):
         "display_date": f"{date_obj.day} {date_obj.strftime('%b')}",
         "meal_type": s.meal_type,
         "status": s.status,
-        "meal": s.meal,
+        "meal": _meal_payload(s),
         "rejection_reasons": s.rejection_reasons or [],
         "calendar_events": [],
     }
 
 def _lunch_to_dict(l):
-    d = dict(l.meal or {})
+    d = dict(_meal_payload(l) or {})
     d["id"] = l.id
     d["status"] = l.status
     d["rejection_reasons"] = l.rejection_reasons or []
@@ -56,33 +77,81 @@ def read_data():
             "generated_at": None,
         }
 
+def _sync_ingredients(owner, meal_dict, *, is_slot):
+    """Replace an owner's ingredient rows from a meal dict, PRESERVING the
+    stored inventory match + reserved_qty for a line whose (item, quantity) is
+    unchanged. This is what lets write_data update meals in place without losing
+    reservations — the churn bug the old delete-all approach caused."""
+    old_by_key = {(i.item, i.quantity): i for i in list(owner.ingredients)}
+    new_ings = (meal_dict or {}).get("ingredients", []) if meal_dict else []
+    owner.ingredients.clear()  # delete-orphan removes rows no longer present
+    for pos, ing in enumerate(new_ings):
+        item = (ing.get("item") or "").strip()
+        if not item:
+            continue
+        quantity = (ing.get("quantity") or "").strip()
+        prev = old_by_key.get((item, quantity))
+        row = MealIngredient(
+            id=str(uuid.uuid4()), item=item, quantity=quantity, position=pos,
+            inventory_item_id=prev.inventory_item_id if prev else None,
+            reserved_qty=prev.reserved_qty if prev else 0,
+        )
+        owner.ingredients.append(row)
+
 def write_data(data):
-    """Persist the full meals state: replace slots and lunch_ideas from the
-    in-memory dict shape used throughout this module."""
+    """Persist the full meals state from the in-memory dict shape used
+    throughout this module. UPSERTS rows (never delete-all), so ingredient
+    inventory links + reservations survive a meal edit."""
     with session_scope() as session:
-        session.query(MealSlot).delete()
-        session.query(LunchIdea).delete()
+        slots = data.get("slots", [])
+        lunches = data.get("lunch_ideas", [])
+        want_slot_ids = {s["id"] for s in slots}
+        want_lunch_ids = {l["id"] for l in lunches}
+
+        # Remove slots/lunches no longer present (cascade drops their ingredients).
+        for s in session.scalars(select(MealSlot)).all():
+            if s.id not in want_slot_ids:
+                session.delete(s)
+        for l in session.scalars(select(LunchIdea)).all():
+            if l.id not in want_lunch_ids:
+                session.delete(l)
         session.flush()
-        for s in data.get("slots", []):
-            session.add(MealSlot(
-                id=s["id"],
-                date=parse_date(s["date"]),
-                meal_type=s.get("meal_type", "dinner"),
-                status=s.get("status", "pending"),
-                meal=s.get("meal"),
-                rejection_reasons=s.get("rejection_reasons", []),
-            ))
-        for l in data.get("lunch_ideas", []):
-            meal = {k: v for k, v in l.items() if k not in ("id", "status", "rejection_reasons")}
-            # Derive week_start from the first slot if available
-            ws = parse_date(data["slots"][0]["date"]) if data.get("slots") else datetime.utcnow().date()
-            session.add(LunchIdea(
-                id=l["id"],
-                week_start=ws,
-                status=l.get("status", "generated"),
-                meal=meal,
-                rejection_reasons=l.get("rejection_reasons", []),
-            ))
+
+        for s in slots:
+            meal = s.get("meal") or {}
+            obj = session.get(MealSlot, s["id"]) or MealSlot(id=s["id"])
+            obj.date = parse_date(s["date"])
+            obj.meal_type = s.get("meal_type", "dinner")
+            obj.status = s.get("status", "pending")
+            obj.name = meal.get("name")
+            obj.description = meal.get("description")
+            obj.prep_minutes = meal.get("prep_minutes")
+            obj.rejection_reasons = s.get("rejection_reasons", [])
+            session.add(obj)
+            session.flush()  # ensure PK exists before attaching children
+            _sync_ingredients(obj, meal, is_slot=True)
+
+        # Lunch ideas float within a week; derive week_start from the slots when
+        # present, else this week's Monday.
+        if slots:
+            ws = parse_date(slots[0]["date"])
+            ws = ws - timedelta(days=ws.weekday())
+        else:
+            today = datetime.utcnow().date()
+            ws = today - timedelta(days=today.weekday())
+        for l in lunches:
+            meal = {k: v for k, v in l.items()
+                    if k not in ("id", "status", "rejection_reasons")}
+            obj = session.get(LunchIdea, l["id"]) or LunchIdea(id=l["id"])
+            obj.week_start = ws
+            obj.status = l.get("status", "generated")
+            obj.name = meal.get("name")
+            obj.description = meal.get("description")
+            obj.prep_minutes = meal.get("prep_minutes")
+            obj.rejection_reasons = l.get("rejection_reasons", [])
+            session.add(obj)
+            session.flush()
+            _sync_ingredients(obj, meal, is_slot=False)
 
 def load_member_profiles():
     profiles = []
@@ -253,7 +322,7 @@ def build_dinner_prompt(slots_to_generate):
         for s in slots_to_generate
     )
 
-    return f"""You are a family meal planner. Generate DINNERS for the Parker family.
+    return f"""You are a family meal planner. Generate DINNERS for the {family_name()} family.
 
 MEAL PLANNING RULES:
 {rules}
@@ -283,7 +352,7 @@ def build_lunch_prompt(count=3, rejection_reasons=None):
     if rejection_reasons:
         rejection_note = f"\nPreviously rejected lunch ideas (suggest different ones): {'; '.join(rejection_reasons)}"
 
-    return f"""You are a family meal planner. Generate {count} LUNCH IDEAS for the Parker family.
+    return f"""You are a family meal planner. Generate {count} LUNCH IDEAS for the {family_name()} family.
 
 These are flexible lunch ideas for the week — they are NOT tied to a specific day. The family will pick from them across the week.
 
@@ -423,6 +492,22 @@ def accept(slot_id):
             write_data(data)
             return jsonify(slot)
     return jsonify({"error": "Slot not found"}), 404
+
+@meals_bp.route("/<slot_id>/cooked", methods=["POST"])
+def cooked(slot_id):
+    """Mark an accepted dinner cooked: consume its reservations (count -= planned
+    for each reserved item), then set the slot status to 'cooked'."""
+    from routes.reservations import consume_meal
+    with session_scope() as session:
+        consumed = consume_meal(session, slot_id)
+    data = read_data()
+    for slot in data["slots"]:
+        if slot["id"] == slot_id:
+            slot["status"] = "cooked"
+            write_data(data)
+            return jsonify({"ok": True, "slot": slot, "consumed": consumed})
+    return jsonify({"error": "Slot not found"}), 404
+
 
 @meals_bp.route("/<slot_id>/skip", methods=["POST"])
 def skip(slot_id):

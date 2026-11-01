@@ -2,4 +2,12 @@
   height: 100vh;
   overflow: hidden;
   background: var(--color-bg);
+  display: flex;
+  flex-direction: column;
+}
+
+.tabBody {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }

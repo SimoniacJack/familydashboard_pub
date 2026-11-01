@@ -1,6 +1,7 @@
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, request, jsonify, session
 from flask_cors import CORS
 from dotenv import load_dotenv
+from datetime import timedelta
 import os
 
 from routes.chores import chores_bp
@@ -11,6 +12,8 @@ from routes.reminders import reminders_bp
 from routes.inventory import inventory_bp
 from routes.assignments import assignments_bp
 from routes.shopping import shopping_bp
+from routes.auth import auth_bp, is_authed
+from routes.config import config_bp
 
 # Local dev loads secrets from git.env; in a container/EC2 they come from the
 # environment (populated from AWS Secrets Manager). load_dotenv is a no-op if
@@ -25,10 +28,47 @@ STATIC_DIR = os.environ.get(
 
 app = Flask(__name__, static_folder=None)
 
-# In dev the Vite proxy handles cross-origin; in prod Flask serves the frontend
-# same-origin so CORS isn't needed. Keep localhost origins allowed for dev.
-CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+# ── Session / cookie auth ───────────────────────────────────────────────────
+# Signed, HttpOnly session cookie keeps the family logged in for 30 days, so
+# they type the shared password once instead of every visit (the old Basic Auth
+# problem). SECRET_KEY signs the cookie — set in git.env / the prod environment.
+app.config.update(
+    SECRET_KEY=os.environ.get("SECRET_KEY", "dev-insecure-change-me"),
+    PERMANENT_SESSION_LIFETIME=timedelta(days=30),
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Secure in prod (HTTPS via Caddy); allow plain http on localhost for dev.
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "1") == "1",
+)
 
+# In dev the Vite proxy handles cross-origin; in prod Flask serves the frontend
+# same-origin so CORS isn't needed. Keep localhost origins allowed for dev, with
+# credentials so the session cookie flows through the proxy.
+CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+     supports_credentials=True)
+
+# Endpoints reachable WITHOUT a session: the auth API itself and health.
+_PUBLIC_API = {"/api/auth/login", "/api/auth/logout", "/api/auth/me", "/api/health", "/api/config/"}
+
+
+@app.before_request
+def require_login():
+    """Gate every /api/* route behind a valid session (except the public set).
+    Non-API paths (the SPA + its assets) are always served so the login page can
+    load; the frontend shows login vs app based on /api/auth/me."""
+    path = request.path
+    if request.method == "OPTIONS":
+        return  # CORS preflight
+    if path.startswith("/api/"):
+        if path in _PUBLIC_API:
+            return
+        if not is_authed():
+            return jsonify({"error": "authentication required"}), 401
+    # Non-API paths fall through — the SPA decides login vs app client-side.
+
+
+app.register_blueprint(auth_bp, url_prefix="/api/auth")
+app.register_blueprint(config_bp, url_prefix="/api/config")
 app.register_blueprint(chores_bp, url_prefix="/api/chores")
 app.register_blueprint(members_bp, url_prefix="/api/members")
 app.register_blueprint(meals_bp, url_prefix="/api/meals")

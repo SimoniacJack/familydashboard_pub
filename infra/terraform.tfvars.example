@@ -6,6 +6,6 @@ ssh_cidr = "YOUR.IP.ADDR.HERE/32"   # lock SSH to your own IP
 # App secrets (same values as git.env)
 openai_api_key          = "sk-..."
 google_calendar_api_key = "..."
-google_calendar_id      = "you@example.com"
+google_calendar_id      = "your-calendar-id@group.calendar.google.com"
 todoist_api_token       = "..."
 db_password             = "pick-a-strong-password"

@@ -50,15 +50,12 @@ referenceimage.png
 food images/
 .kiro/
 familymembers/*
-!familymembers/.gitkeep
-!familymembers/example-adult.md
-!familymembers/example-child.md
 
-# Internal handoff notes (not for public repo)
-docs/session-handoff.md
-
-# Real exported seed data (ship your own; example set is tracked)
-backend/data/_migrated_json/
-backend/data/_migrated_json/**
-backend/data/*.json
-!backend/data/example/
+# Per-family content — each instance has its own; never in the public repo.
+# Real profiles/photos and seed data live only on the instance.
+familymembers/*
+!familymembers/example-*.md
+!familymembers/README.md
+backend/data/_migrated_json/*
+frontend/test-results/
+backend/test-results/

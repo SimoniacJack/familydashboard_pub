@@ -9,6 +9,10 @@ export default defineConfig({
   expect: { timeout: 5000 },
   fullyParallel: false,
   retries: 0,
+  // One worker: the local Flask dev backend is single-threaded, so parallel
+  // browser contexts firing auth + data calls at once overwhelm it and login
+  // requests time out. Serial keeps the dev server responsive.
+  workers: 1,
   reporter: [['list']],
   use: {
     baseURL: 'http://localhost:4173',

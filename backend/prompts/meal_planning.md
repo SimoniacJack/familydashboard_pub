@@ -13,8 +13,7 @@
 - Do not suggest ingredients that require specialist shops or online ordering.
 
 ## Meal suitability
-- Meals must work for the whole family. Per-member profiles (provided as steering) give each person's age, likes, dislikes, and dietary needs — honour them.
-- For young children, keep their portions plain and simple (no strong flavours or spices); for toddlers, soft foods, no choking hazards, low salt.
+- Meals must work for the whole family including Ada (age 7, picky — plain and simple food, no strong flavours or spices) and Kit (age 1, toddler — soft foods, no choking hazards, low salt).
 - Prefer meals where adult portions can be mildly seasoned and children's portions kept plainer.
 
 ## Prep time

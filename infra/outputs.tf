@@ -17,3 +17,8 @@ output "ecr_repository_url" {
   description = "Push the app image here before/after apply"
   value       = aws_ecr_repository.app.repository_url
 }
+
+output "backup_bucket" {
+  description = "S3 bucket holding nightly database backups."
+  value       = aws_s3_bucket.backups.bucket
+}

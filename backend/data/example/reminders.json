@@ -1,4 +1,0 @@
-{ "reminders": [
-  { "id": "brush-teeth", "label": "Brush teeth", "routines": ["morning", "evening"] },
-  { "id": "water-plants", "label": "Water the plants", "routines": ["morning"] }
-] }

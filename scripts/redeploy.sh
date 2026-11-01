@@ -40,7 +40,7 @@ ok "containers recreated"
 
 log "Health check"
 for i in $(seq 1 20); do
-  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' -u "${BASIC_AUTH_USER:-admin}:${BASIC_AUTH_PASS:-}" "$APP_URL/api/health" || true)
+  code=$(curl -s -m 10 -o /dev/null -w '%{http_code}' "$APP_URL/api/health" || true)
   if [ "$code" = "200" ]; then
     ok "healthy (HTTP 200) at $APP_URL"
     echo

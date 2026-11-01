@@ -1,4 +1,0 @@
-{ "items": [
-  { "id": "milk", "name": "Milk", "location": "fridge" },
-  { "id": "bread", "name": "Bread", "location": "pantry" }
-] }

@@ -10,14 +10,12 @@ VENV_PY="$REPO_ROOT/.venv/bin/python"
 VENV_AWS="$REPO_ROOT/.venv/bin/aws"
 KEY="$REPO_ROOT/infra/familydashboard.pem"
 
-# ── Infra values ────────────────────────────────────────────────────────────
-# Set these in your environment (or a sourced, gitignored infra.env) to match
-# your own deployment. Defaults are placeholders — override them.
-AWS_REGION="${AWS_REGION:-eu-west-2}"
-ECR_REGISTRY="${ECR_REGISTRY:-<account-id>.dkr.ecr.${AWS_REGION}.amazonaws.com}"
-ECR_REPO="${ECR_REPO:-$ECR_REGISTRY/familydashboard}"
-EC2_HOST="${EC2_HOST:-ubuntu@your-server-ip}"   # e.g. ubuntu@203.0.113.10
-APP_URL="${APP_URL:-https://your-domain.example.org}"
+# ── Fixed infra values (from Terraform outputs) ─────────────────────────────
+AWS_REGION="eu-west-2"
+ECR_REPO="YOUR_AWS_ACCOUNT_ID.dkr.ecr.eu-west-2.amazonaws.com/familydashboard"
+ECR_REGISTRY="YOUR_AWS_ACCOUNT_ID.dkr.ecr.eu-west-2.amazonaws.com"
+EC2_HOST="ubuntu@YOUR_EC2_IP"          # Elastic IP (stable)
+APP_URL="https://your-domain.example.com"
 COMPOSE="/opt/app/docker-compose.prod.yml"
 
 # ── docker: use sudo only if the daemon isn't reachable without it ──────────
@@ -41,7 +39,10 @@ todoist_token() {
 }
 
 ssh_ec2() {
-  ssh -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i "$KEY" "$EC2_HOST" "$@"
+  # -F /dev/null ignores system/user ssh_config: some hosts (e.g. WSL) ship an
+  # /etc/ssh/ssh_config.d entry that OpenSSH refuses on bad owner/permissions,
+  # which would otherwise abort every ssh call. We rely only on explicit flags.
+  ssh -F /dev/null -o StrictHostKeyChecking=no -o ConnectTimeout=20 -i "$KEY" "$EC2_HOST" "$@"
 }
 
 ecr_login_local() {

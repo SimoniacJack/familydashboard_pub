@@ -172,3 +172,59 @@ resource "aws_eip" "app" {
   domain   = "vpc"
   tags     = { Project = var.project }
 }
+
+# ── Nightly database backups to S3 ───────────────────────────────────────────
+# The instance pg_dumps the Postgres container nightly and uploads here using
+# its instance role (no credentials on the box). Private + versioned, with a
+# lifecycle rule so old backups auto-expire and cost stays near zero.
+data "aws_caller_identity" "current" {}
+
+resource "aws_s3_bucket" "backups" {
+  bucket = "${var.project}-backups-${data.aws_caller_identity.current.account_id}"
+  tags   = { Project = var.project }
+}
+
+resource "aws_s3_bucket_public_access_block" "backups" {
+  bucket                  = aws_s3_bucket.backups.id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_versioning" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  versioning_configuration { status = "Enabled" }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backups" {
+  bucket = aws_s3_bucket.backups.id
+  rule {
+    id     = "expire-old-backups"
+    status = "Enabled"
+    filter { prefix = "backups/" }
+    expiration { days = var.backup_retention_days }
+    noncurrent_version_expiration { noncurrent_days = var.backup_retention_days }
+  }
+}
+
+# Let the instance role write (and list/read for restore) that one bucket.
+resource "aws_iam_role_policy" "backups" {
+  name = "${var.project}-write-backups"
+  role = aws_iam_role.ec2.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+      ]
+      Resource = [
+        aws_s3_bucket.backups.arn,
+        "${aws_s3_bucket.backups.arn}/*",
+      ]
+    }]
+  })
+}
