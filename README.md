@@ -73,5 +73,5 @@ development:
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jfpjacka)
 
-> Replace `jfpjacka` with your Buy Me a Coffee handle (from your BMC page
+> Forking this? Replace the handle above with your own Buy Me a Coffee handle (from your BMC page
 > URL, e.g. `buymeacoffee.com/janedoe` → `janedoe`).
