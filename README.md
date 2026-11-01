@@ -71,7 +71,7 @@ No family's data ships in this repo — only the code and example templates.
 If this project is useful to your family and you'd like to support its
 development:
 
-[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/YOUR_USERNAME)
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/jfpjacka)
 
-> Replace `YOUR_USERNAME` with your Buy Me a Coffee handle (from your BMC page
+> Replace `jfpjacka` with your Buy Me a Coffee handle (from your BMC page
 > URL, e.g. `buymeacoffee.com/janedoe` → `janedoe`).
