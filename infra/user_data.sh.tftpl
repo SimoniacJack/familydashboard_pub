@@ -25,11 +25,15 @@ docker pull ${image_uri}
 APP_DOMAIN=$(echo "$SECRET" | jq -r '.APP_DOMAIN // empty')
 
 # Caddy config: automatic HTTPS + basic auth, reverse-proxied to the app.
-# The bcrypt $ chars are escaped so the shell leaves them literal.
+# The bcrypt \$ chars are escaped so the shell leaves them literal.
+# NOTE: this basic_auth gate is legacy — the app now has its own cookie-session
+# login. If you keep it, generate YOUR OWN hash with:  caddy hash-password
+# and replace the placeholder below (username + bcrypt hash). Never commit a
+# real credential to a public repo.
 cat > /opt/app/Caddyfile <<CADDY
 $APP_DOMAIN {
     basic_auth {
-        parker \$2a\$14\$T1wVz3qsUtxMlWU6WRynMOZcDpsCfX9Lc6zcTq8T3HsMBDbelwAhe
+        admin \$2a\$14\$REPLACE_WITH_YOUR_OWN_CADDY_HASH_PASSWORD_BCRYPT_VALUE0
     }
     reverse_proxy app:5000
 }
