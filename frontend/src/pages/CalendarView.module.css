@@ -1303,3 +1303,53 @@
   color: var(--color-text);
   font-size: 0.78rem;
 }
+
+/* ── Steering suggestion card (after a rejection) ──────────────────────────── */
+.steerCard {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius);
+  padding: 0.8rem 1rem;
+  margin: 0.5rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  box-shadow: var(--shadow);
+}
+.steerHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.steerHint { font-size: 0.8rem; color: var(--color-text-muted); margin: 0; }
+.steerField {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+}
+.steerField select {
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  font-size: 0.85rem;
+}
+.steerText {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+.errMsg { color: var(--color-danger, #d9534f); font-size: 0.8rem; align-self: center; }

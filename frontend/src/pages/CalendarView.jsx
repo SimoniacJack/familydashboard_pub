@@ -48,6 +48,23 @@ export default function CalendarView() {
   const [mealStatus, setMealStatus] = useState({}) // mealId -> {makeable, ingredients:[{id,name,quantity,state}]}
   const [invItems, setInvItems] = useState([]) // flat inventory list for the match picker
   const [invLocations, setInvLocations] = useState([])
+  const [steerSuggest, setSteerSuggest] = useState(null) // {target_key, target_title, addition} after a reject
+
+  // After a rejection, ask GPT for a durable steering amendment and show a
+  // confirm card. Non-blocking: a failure just skips the card.
+  const proposeSteering = useCallback(async (reason, mealName) => {
+    if (!reason?.trim()) return
+    try {
+      const res = await fetch('/api/steering/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason, meal_name: mealName || '' }),
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.addition) setSteerSuggest(data)
+    } catch { /* non-fatal — no card */ }
+  }, [])
   const [members, setMembers] = useState([])
   const [now, setNow] = useState(new Date())
   const [weekStart, setWeekStart] = useState(null) // YYYY-MM-DD Monday being viewed; null = this week
@@ -237,6 +254,9 @@ export default function CalendarView() {
 
   async function reject(slotId, reason) {
     setLoadingSlot(slotId)
+    // Capture the rejected meal's name before it regenerates, for the steering
+    // suggestion.
+    const rejectedName = selectedSlot?.id === slotId ? selectedSlot?.meal?.name : null
     const res = await fetch(`${MEALS_API}/${slotId}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -247,6 +267,7 @@ export default function CalendarView() {
     setRejectSlot(null)
     setRejectReason('')
     setLoadingSlot(null)
+    proposeSteering(reason, rejectedName)
   }
 
   async function reset() {
@@ -295,6 +316,7 @@ export default function CalendarView() {
   }
 
   async function rejectLunch(lunchId, reason) {
+    const rejectedName = week?.lunch_ideas?.find(l => l.id === lunchId)?.name || null
     const res = await fetch(`${MEALS_API}/lunch/${lunchId}/reject`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -302,6 +324,7 @@ export default function CalendarView() {
     })
     const updated = await res.json()
     patchLunch(updated)
+    proposeSteering(reason, rejectedName)
   }
 
   // Step 1 of pushing the shopping list: reserve stock against accepted meals
@@ -507,6 +530,14 @@ export default function CalendarView() {
 
       {error && <p className={styles.errorBanner}>{error}</p>}
       {pushStatus && <p className={styles.successBanner}>{pushStatus}</p>}
+
+      {steerSuggest && (
+        <SteeringSuggestCard
+          suggestion={steerSuggest}
+          members={members}
+          onClose={() => setSteerSuggest(null)}
+        />
+      )}
 
       {draft && (
         <DraftReviewPanel
@@ -847,6 +878,67 @@ function AssignModal({ event, members, onSave, onReset, onClose }) {
             Reset to automatic
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Steering suggestion after a rejection (GPT proposes, user confirms) ─────
+
+function SteeringSuggestCard({ suggestion, members, onClose }) {
+  const [targetKey, setTargetKey] = useState(suggestion.target_key)
+  const [addition, setAddition] = useState(suggestion.addition)
+  const [status, setStatus] = useState('') // '' | 'saving' | 'done' | 'error'
+
+  const targets = [
+    { key: 'meal_planning', label: 'General meal-planning prompt' },
+    ...members.map(m => ({ key: `member:${m.id}`, label: `${m.name} — likes & dislikes` })),
+  ]
+
+  async function apply() {
+    if (!addition.trim()) return
+    setStatus('saving')
+    try {
+      const res = await fetch(`/api/steering/${encodeURIComponent(targetKey)}/append`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ addition: addition.trim() }),
+      })
+      if (!res.ok) throw new Error()
+      setStatus('done')
+      setTimeout(onClose, 1200)
+    } catch {
+      setStatus('error')
+    }
+  }
+
+  return (
+    <div className={styles.steerCard} data-testid="steer-suggest">
+      <div className={styles.steerHead}>
+        <span>💡 Teach the meal planner?</span>
+        <button className={styles.closeBtn} onClick={onClose}>✕</button>
+      </div>
+      <p className={styles.steerHint}>
+        From your reason, I suggest adding this so future meals remember it. Edit or change where it goes.
+      </p>
+      <label className={styles.steerField}>
+        Add to
+        <select value={targetKey} onChange={e => setTargetKey(e.target.value)}>
+          {targets.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+        </select>
+      </label>
+      <textarea
+        className={styles.steerText}
+        value={addition}
+        onChange={e => setAddition(e.target.value)}
+        rows={2}
+      />
+      <div className={styles.detailActions}>
+        <button className={styles.btnAccept} onClick={apply} disabled={!addition.trim() || status === 'saving'}>
+          {status === 'saving' ? 'Saving…' : status === 'done' ? '✓ Added' : 'Add to steering'}
+        </button>
+        <button className={styles.btnSkip} onClick={onClose}>Skip</button>
+        {status === 'error' && <span className={styles.errMsg}>Failed — try again</span>}
       </div>
     </div>
   )

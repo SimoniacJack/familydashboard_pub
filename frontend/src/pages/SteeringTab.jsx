@@ -3,6 +3,44 @@ import styles from './SteeringTab.module.css'
 
 const API = '/api/steering'
 
+// Minimal, safe markdown -> HTML for the preview. Escapes HTML first, then
+// renders headings, bold, italic, inline code, and - / * bullet lists. The
+// content is short profile/prompt markdown, so this covers it without pulling
+// in a heavy markdown dependency (keeps the PWA bundle lean).
+function renderMarkdown(src) {
+  const esc = (s) => s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const inline = (s) => esc(s)
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+
+  const lines = (src || '').split('\n')
+  const out = []
+  let inList = false
+  const closeList = () => { if (inList) { out.push('</ul>'); inList = false } }
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    const h = line.match(/^(#{1,4})\s+(.*)$/)
+    const li = line.match(/^\s*[-*]\s+(.*)$/)
+    if (h) {
+      closeList()
+      const lvl = h[1].length
+      out.push(`<h${lvl}>${inline(h[2])}</h${lvl}>`)
+    } else if (li) {
+      if (!inList) { out.push('<ul>'); inList = true }
+      out.push(`<li>${inline(li[1])}</li>`)
+    } else if (line === '') {
+      closeList()
+    } else {
+      closeList()
+      out.push(`<p>${inline(line)}</p>`)
+    }
+  }
+  closeList()
+  return out.join('\n')
+}
+
 // View/edit the AI meal-planning prompt and per-member likes/dislikes.
 // Edits persist in the DB (override the baked file); revert drops the override.
 export default function SteeringTab() {
@@ -40,6 +78,7 @@ export default function SteeringTab() {
 function SteeringDoc({ doc, onSaved }) {
   const [text, setText] = useState(doc.content)
   const [status, setStatus] = useState('') // '' | 'saving' | 'saved' | 'error'
+  const [mode, setMode] = useState('preview') // preview | edit
   const dirty = text !== doc.content
 
   async function save() {
@@ -78,13 +117,32 @@ function SteeringDoc({ doc, onSaved }) {
         {doc.overridden && <span className={styles.editedTag}>edited</span>}
       </div>
       {doc.help && <p className={styles.docHelp}>{doc.help}</p>}
-      <textarea
-        className={styles.textarea}
-        value={text}
-        onChange={e => setText(e.target.value)}
-        spellCheck={false}
-        rows={Math.min(20, Math.max(5, text.split('\n').length + 1))}
-      />
+
+      <div className={styles.modeRow}>
+        <button
+          className={mode === 'preview' ? styles.modeOn : styles.modeOff}
+          onClick={() => setMode('preview')}
+        >Preview</button>
+        <button
+          className={mode === 'edit' ? styles.modeOn : styles.modeOff}
+          onClick={() => setMode('edit')}
+        >Edit</button>
+      </div>
+
+      {mode === 'edit' ? (
+        <textarea
+          className={styles.textarea}
+          value={text}
+          onChange={e => setText(e.target.value)}
+          spellCheck={false}
+          rows={Math.min(20, Math.max(5, text.split('\n').length + 1))}
+        />
+      ) : (
+        <div
+          className={styles.preview}
+          dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }}
+        />
+      )}
       <div className={styles.docActions}>
         <button className={styles.saveBtn} onClick={save} disabled={!dirty || status === 'saving'}>
           {status === 'saving' ? 'Saving…' : 'Save'}

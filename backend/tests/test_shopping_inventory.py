@@ -479,3 +479,38 @@ def test_steering_empty_content_reverts(client):
     r = client.put("/api/steering/meal_planning", json={"content": "   "})
     assert r.status_code == 200
     assert r.get_json()["overridden"] is False
+
+
+def test_steering_append_adds_line(client):
+    # Append to the meal prompt -> content now ends with the bullet, overridden.
+    r = client.post("/api/steering/meal_planning/append",
+                    json={"addition": "- Avoid omelettes for Hannah"})
+    assert r.status_code == 200
+    assert r.get_json()["overridden"] is True
+    docs = {d["key"]: d for d in client.get("/api/steering/").get_json()["docs"]}
+    assert "Avoid omelettes for Hannah" in docs["meal_planning"]["content"]
+
+
+def test_steering_suggest_mocked(client, monkeypatch):
+    import routes.steering as steering
+
+    class _Msg:
+        content = '{"target_key":"meal_planning","target_title":"Meal-planning prompt","addition":"- Dislikes omelettes"}'
+    class _Choice: message = _Msg()
+    class _Resp: choices = [_Choice()]
+    class _Completions:
+        def create(self, **k): return _Resp()
+    class _Chat: completions = _Completions()
+    class _FakeClient:
+        def __init__(self, **k): self.chat = _Chat()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", _FakeClient)
+
+    r = client.post("/api/steering/suggest",
+                    json={"reason": "Hannah hates omelettes", "meal_name": "Omelette"})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["target_key"] == "meal_planning"
+    assert "omelette" in body["addition"].lower()
