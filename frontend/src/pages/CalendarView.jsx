@@ -41,8 +41,13 @@ export default function CalendarView() {
   const [rejectReason, setRejectReason] = useState('')
   const [pushStatus, setPushStatus] = useState(null)
   const [draft, setDraft] = useState(null) // {draft, used_gpt} once /draft returns -> opens review panel
+  const [lunchCount, setLunchCount] = useState(3) // how many lunch ideas to generate
+  const [generatingLunches, setGeneratingLunches] = useState(false)
   const [error, setError] = useState(null)
   const [selectedSlot, setSelectedSlot] = useState(null) // for detail popover
+  const [mealStatus, setMealStatus] = useState({}) // mealId -> {makeable, ingredients:[{id,name,quantity,state}]}
+  const [invItems, setInvItems] = useState([]) // flat inventory list for the match picker
+  const [invLocations, setInvLocations] = useState([])
   const [members, setMembers] = useState([])
   const [now, setNow] = useState(new Date())
   const [weekStart, setWeekStart] = useState(null) // YYYY-MM-DD Monday being viewed; null = this week
@@ -95,6 +100,38 @@ export default function CalendarView() {
     }
   }, [])
 
+  // Per-accepted-meal inventory/shopping breakdown for the badges + detail.
+  const fetchStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${MEALS_API}/status`)
+      const data = await res.json()
+      setMealStatus(data.meals || {})
+    } catch { /* badges just won't show; non-fatal */ }
+  }, [])
+
+  // Flat inventory list (+ locations) for the ingredient "match to inventory" picker.
+  const fetchInventory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/inventory/')
+      const data = await res.json()
+      setInvLocations(data.locations || [])
+      const flat = []
+      for (const loc of Object.keys(data.items || {})) {
+        for (const it of data.items[loc]) flat.push({ id: it.id, name: it.name, location: loc })
+      }
+      flat.sort((a, b) => a.name.localeCompare(b.name))
+      setInvItems(flat)
+    } catch { /* picker just shows empty; non-fatal */ }
+  }, [])
+
+  // Apply a refreshed single-meal status returned by an ingredient edit, and
+  // refresh the inventory picker (an add/consume may have changed stock).
+  const applyStatus = useCallback((st) => {
+    if (!st?.meal_key) return
+    setMealStatus(m => ({ ...m, [st.meal_key]: { makeable: st.makeable, ingredients: st.ingredients } }))
+    fetchInventory()
+  }, [fetchInventory])
+
   // Navigate weeks by offsetting both week_start and the selected day by ±7 days
   function shiftWeek(deltaDays) {
     if (!weekStart) return
@@ -128,6 +165,10 @@ export default function CalendarView() {
   }
 
   useEffect(() => { fetchWeek() }, [fetchWeek])
+
+  // Refresh the inventory/shopping breakdown whenever the week (and its
+  // accepted meals) may have changed.
+  useEffect(() => { fetchStatus(); fetchInventory() }, [fetchStatus, fetchInventory, weekStart, week])
 
   // Propose meals. With no argument: the whole (next) week. With a date:
   // just that one day's dinner.
@@ -176,8 +217,13 @@ export default function CalendarView() {
   async function accept(slotId) {
     setLoadingSlot(slotId)
     const res = await fetch(`${MEALS_API}/${slotId}/accept`, { method: 'POST' })
-    const updated = await res.json()
-    patchSlot(updated)
+    const data = await res.json()
+    patchSlot(data.slot || data)
+    if (data.draft?.length) {
+      setDraft({ draft: data.draft, used_gpt: data.used_gpt, kind: 'dinner', id: slotId })
+    } else {
+      setPushStatus('✅ Meal accepted — stock covers it, nothing to buy.')
+    }
     setLoadingSlot(null)
   }
 
@@ -218,10 +264,34 @@ export default function CalendarView() {
     }))
   }
 
+  async function generateLunches(count) {
+    setGeneratingLunches(true)
+    setError(null)
+    try {
+      const res = await fetch(`${MEALS_API}/lunch/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Lunch generation failed')
+      setWeek(w => ({ ...w, lunch_ideas: data.lunch_ideas || [] }))
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setGeneratingLunches(false)
+    }
+  }
+
   async function acceptLunch(lunchId) {
     const res = await fetch(`${MEALS_API}/lunch/${lunchId}/accept`, { method: 'POST' })
-    const updated = await res.json()
-    patchLunch(updated)
+    const data = await res.json()
+    patchLunch(data.idea || data)
+    if (data.draft?.length) {
+      setDraft({ draft: data.draft, used_gpt: data.used_gpt, kind: 'lunch', id: lunchId })
+    } else {
+      setPushStatus('✅ Lunch accepted — stock covers it, nothing to buy.')
+    }
   }
 
   async function rejectLunch(lunchId, reason) {
@@ -256,6 +326,30 @@ export default function CalendarView() {
       setPushStatus(`❌ ${e.message}`)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  // Cancelling the review panel. For a per-meal draft (kind set on accept),
+  // revert that meal to 'generated' and reconcile — closing the modal must NOT
+  // leave the meal marked accepted/done. A batch "review full list" draft has
+  // no kind, so cancel just closes it, touching nothing.
+  async function cancelDraft() {
+    const d = draft
+    setDraft(null)
+    if (!d?.kind) return
+    try {
+      const path = d.kind === 'lunch'
+        ? `${MEALS_API}/lunch/${d.id}/unaccept`
+        : `${MEALS_API}/${d.id}/unaccept`
+      const res = await fetch(path, { method: 'POST' })
+      const updated = await res.json()
+      if (res.ok) {
+        if (d.kind === 'lunch') patchLunch(updated)
+        else patchSlot(updated)
+      }
+    } catch {
+      // Revert is best-effort; refetch to resync if it failed.
+      await fetchWeek(weekStart)
     }
   }
 
@@ -298,15 +392,16 @@ export default function CalendarView() {
 
   const memberById = Object.fromEntries(members.map(m => [m.id, m]))
 
-  // On mobile: taller grid so every 30-min increment is visible, and show only
-  // the selected day's column. On desktop: compact 28px/hr, all 7 days.
-  const hourHeight = isMobile ? 64 : HOUR_HEIGHT
+  // On mobile: compact, hourly-resolution grid that fits a phone screen.
+  // On desktop: 28px/hr, all 7 days.
+  const hourHeight = isMobile ? 32 : HOUR_HEIGHT
   const totalHeight = (DAY_END_HOUR - DAY_START_HOUR) * hourHeight
   const topFor = h => Math.max(0, (h - DAY_START_HOUR) * hourHeight)
   const heightFor = (s, e) => Math.max(18, (e - s) * hourHeight)
-  // Half-hour grid lines (mobile shows them; desktop just hour lines)
+  // Grid lines: hour-only on both (mobile used to show half-hours but that made
+  // the grid too tall on a phone — hourly resolution is enough).
   const halfHours = []
-  for (let h = DAY_START_HOUR; h < DAY_END_HOUR; h += 0.5) halfHours.push(h)
+  for (let h = DAY_START_HOUR; h < DAY_END_HOUR; h += 1) halfHours.push(h)
   const allDays = week?.days ?? []
   const shownDays = isMobile ? allDays.filter(d => d.date === selectedDate) : allDays
 
@@ -330,8 +425,8 @@ export default function CalendarView() {
 
   return (
     <div className={`${styles.page} ${viewingToday ? '' : styles.pageOffToday}`}>
-      {/* Off-today banner */}
-      {!viewingToday && (
+      {/* Off-today banner — desktop only; the user finds it noise on mobile. */}
+      {!viewingToday && !isMobile && (
         <div className={styles.offTodayBanner}>
           <span>Viewing <strong>{selectedLabel}</strong> — not today</span>
           <button className={styles.backToTodayBtn} onClick={goToday}>Back to today</button>
@@ -394,14 +489,9 @@ export default function CalendarView() {
         </div>
 
         <div className={styles.mealActions}>
-          {hasSlots && (
-            <button className={styles.btnSecondary} onClick={reset} disabled={generating}>
-              Start Over
-            </button>
-          )}
           {allResolved && (
             <button className={styles.btnSuccess} onClick={pushToTodoist} disabled={generating} data-testid="push-shopping">
-              {generating ? 'Pushing…' : 'Push to Todoist'}
+              {generating ? 'Checking…' : 'Review full shopping list'}
             </button>
           )}
           {(!hasSlots || pendingCount > 0) && (
@@ -423,7 +513,7 @@ export default function CalendarView() {
           draft={draft.draft}
           usedGpt={draft.used_gpt}
           onConfirm={onDraftConfirm}
-          onCancel={() => setDraft(null)}
+          onCancel={cancelDraft}
         />
       )}
 
@@ -511,6 +601,7 @@ export default function CalendarView() {
                     {dinnerSlot && (
                       <MealChip
                         slot={dinnerSlot}
+                        status={mealStatus[dinnerSlot.id]}
                         isLoading={loadingSlot === dinnerSlot.id}
                         onClick={() => setSelectedSlot(selectedSlot?.id === dinnerSlot.id ? null : dinnerSlot)}
                         isSelected={selectedSlot?.id === dinnerSlot.id}
@@ -605,9 +696,23 @@ export default function CalendarView() {
           </button>
 
           {/* ── Meal detail panel (right side) ── */}
-          {selectedSlot && (
+        </div>
+      )}
+
+      {/* ── Meal detail: modal popup (was a side panel) ── */}
+      {selectedSlot && (
+        <div
+          className={styles.mealModalOverlay}
+          onClick={() => setSelectedSlot(null)}
+          data-testid="meal-modal"
+        >
+          <div className={styles.mealModalInner} onClick={e => e.stopPropagation()}>
             <MealDetail
               slot={selectedSlot}
+              status={mealStatus[selectedSlot.id]}
+              locations={invLocations}
+              inventoryItems={invItems}
+              onIngredientChanged={applyStatus}
               isLoading={loadingSlot === selectedSlot.id}
               isRejecting={rejectSlot === selectedSlot.id}
               rejectReason={rejectReason}
@@ -620,20 +725,41 @@ export default function CalendarView() {
               onCook={() => cook(selectedSlot.id)}
               onClose={() => setSelectedSlot(null)}
             />
-          )}
+          </div>
         </div>
       )}
 
       {/* ── Lunch ideas + Chores, below the calendar ── */}
       {!loading && (
         <div className={styles.belowCalendar}>
-          {(week?.lunch_ideas?.length > 0) && (
-            <LunchIdeas
-              ideas={week.lunch_ideas}
-              onAccept={acceptLunch}
-              onReject={rejectLunch}
-            />
+          {hasSlots && (
+            <div className={styles.clearPlanRow}>
+              <button
+                className={styles.btnSecondary}
+                onClick={() => {
+                  if (window.confirm('Clear the whole meal plan for this week? This removes all dinners and lunch ideas (accepted ones too).')) reset()
+                }}
+                disabled={generating}
+                data-testid="clear-plan"
+                title="Remove all dinners and lunch ideas for this week"
+              >
+                🗑 Clear meal plan
+              </button>
+            </div>
           )}
+          <LunchIdeas
+            ideas={week?.lunch_ideas ?? []}
+            mealStatus={mealStatus}
+            locations={invLocations}
+            inventoryItems={invItems}
+            onIngredientChanged={applyStatus}
+            onAccept={acceptLunch}
+            onReject={rejectLunch}
+            count={lunchCount}
+            onCountChange={setLunchCount}
+            onGenerate={() => generateLunches(lunchCount)}
+            generating={generatingLunches}
+          />
           <div className={styles.choresSection}>
             <Reminders date={selectedDate} filterMember={filterMember} />
           </div>
@@ -726,9 +852,128 @@ function AssignModal({ event, members, onSave, onReset, onClose }) {
   )
 }
 
+// ─── Shared: per-ingredient inventory/shopping state tags + actions ──────────
+
+const STATE_META = {
+  in_stock: { icon: '✅', label: 'In stock', cls: 'stateInStock' },
+  on_list:  { icon: '🛒', label: 'On shopping list', cls: 'stateOnList' },
+  need:     { icon: '⚠️', label: 'Not on any list', cls: 'stateNeed' },
+}
+
+const ING_API = '/api/meals/ingredient'
+
+// One ingredient row with an expandable action menu to correct its
+// inventory/shopping link. onChanged receives the refreshed meal status.
+function IngredientRow({ ing, locations, inventoryItems, onChanged }) {
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [picking, setPicking] = useState(null) // 'match' | 'add' | null
+  const [matchId, setMatchId] = useState('')
+  const [addLoc, setAddLoc] = useState(locations?.[0] || 'pantry')
+  const meta = STATE_META[ing.state] || STATE_META.need
+
+  async function call(path, body) {
+    setBusy(true)
+    try {
+      const res = await fetch(`${ING_API}/${ing.id}/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const data = await res.json()
+      if (res.ok && data.status) onChanged?.(data.status)
+    } finally {
+      setBusy(false); setOpen(false); setPicking(null)
+    }
+  }
+
+  function consume() {
+    const n = window.prompt('How many did you use?', '1')
+    if (n == null) return
+    const qty = Math.max(1, parseInt(n, 10) || 1)
+    call('consume', { qty })
+  }
+
+  return (
+    <li className={`${styles.stateItem} ${styles[meta.cls]}`}>
+      <div className={styles.stateRow}>
+        <span className={styles.stateIcon} title={meta.label} aria-label={meta.label}>{meta.icon}</span>
+        <span className={styles.stateName}>{ing.name}</span>
+        {ing.quantity && <span className={styles.qty}> — {ing.quantity}</span>}
+        <button
+          className={styles.stateMenuBtn}
+          onClick={() => setOpen(o => !o)}
+          disabled={busy}
+          title="Fix this ingredient"
+          data-testid="ing-menu"
+        >⋯</button>
+      </div>
+
+      {open && (
+        <div className={styles.stateActions}>
+          {ing.state === 'in_stock' ? (
+            <>
+              <button className={styles.stateAction} onClick={consume} disabled={busy}>Mark some used…</button>
+              <button className={styles.stateAction} onClick={() => call('unmatch')} disabled={busy}>Wrong match — unmatch</button>
+            </>
+          ) : (
+            <>
+              <button className={styles.stateAction} onClick={() => setPicking(picking === 'match' ? null : 'match')} disabled={busy}>Match to inventory…</button>
+              <button className={styles.stateAction} onClick={() => setPicking(picking === 'add' ? null : 'add')} disabled={busy}>I have it — add to inventory…</button>
+              {ing.state !== 'on_list' && (
+                <button className={styles.stateAction} onClick={() => call('to-shopping')} disabled={busy}>Add to shopping list</button>
+              )}
+            </>
+          )}
+
+          {picking === 'match' && (
+            <div className={styles.statePicker}>
+              <select value={matchId} onChange={e => setMatchId(e.target.value)}>
+                <option value="">Choose an inventory item…</option>
+                {inventoryItems.map(it => (
+                  <option key={it.id} value={it.id}>{it.name} ({it.location})</option>
+                ))}
+              </select>
+              <button className={styles.btnAccept} disabled={!matchId || busy}
+                onClick={() => call('match', { inventory_item_id: matchId })}>Link</button>
+            </div>
+          )}
+
+          {picking === 'add' && (
+            <div className={styles.statePicker}>
+              <select value={addLoc} onChange={e => setAddLoc(e.target.value)}>
+                {locations.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <button className={styles.btnAccept} disabled={busy}
+                onClick={() => call('add-to-inventory', { location: addLoc, track_mode: 'count', count: 1 })}>Add</button>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
+  )
+}
+
+function IngredientStates({ ingredients, locations = [], inventoryItems = [], onChanged }) {
+  if (!ingredients?.length) return null
+  return (
+    <ul className={styles.stateList} data-testid="ingredient-states">
+      {ingredients.map((ing, i) => (
+        <IngredientRow
+          key={ing.id || i}
+          ing={ing}
+          locations={locations}
+          inventoryItems={inventoryItems}
+          onChanged={onChanged}
+        />
+      ))}
+    </ul>
+  )
+}
+
 // ─── Meal chip (compact, shown in all-day strip) ──────────────────────────────
 
-function MealChip({ slot, isLoading, onClick, isSelected }) {
+function MealChip({ slot, status, isLoading, onClick, isSelected }) {
   if (!slot) return null
 
   const chipClass = {
@@ -747,22 +992,30 @@ function MealChip({ slot, isLoading, onClick, isSelected }) {
     ? `${slot.meal_type}: pending`
     : slot.meal?.name || slot.meal_type
 
+  // Badge: only for accepted meals, from the inventory/shopping breakdown.
+  const badge = (slot.status === 'accepted' && status)
+    ? (status.makeable
+        ? { icon: '🟢', title: 'Makeable from stock' }
+        : { icon: '🛒', title: 'Needs shopping' })
+    : null
+
   return (
     <button
       className={`${styles.mealChip} ${chipClass} ${isSelected ? styles.chipSelected : ''}`}
       onClick={onClick}
-      title={slot.meal?.name}
+      title={badge ? badge.title : slot.meal?.name}
     >
       <span className={styles.chipType}>🍽️</span>
       <span className={styles.chipName}>{label}</span>
-      {slot.status === 'accepted' && <span className={styles.chipTick}>✓</span>}
+      {badge && <span className={styles.chipBadge} title={badge.title}>{badge.icon}</span>}
+      {slot.status === 'accepted' && !badge && <span className={styles.chipTick}>✓</span>}
     </button>
   )
 }
 
 // ─── Meal detail panel (shown below the grid when a chip is clicked) ──────────
 
-function MealDetail({ slot, isLoading, isRejecting, rejectReason,
+function MealDetail({ slot, status, locations = [], inventoryItems = [], onIngredientChanged, isLoading, isRejecting, rejectReason,
   onAccept, onSkip, onRejectOpen, onRejectCancel, onRejectConfirm, onRejectReasonChange, onCook, onClose }) {
 
   const [showIngredients, setShowIngredients] = useState(false)
@@ -780,24 +1033,46 @@ function MealDetail({ slot, isLoading, isRejecting, rejectReason,
       {slot.status === 'skipped' && <p className={styles.mutedText}>Marked as not needed.</p>}
       {slot.status === 'pending' && <p className={styles.mutedText}>Waiting to be generated.</p>}
 
+      {/* Accepted meal: inventory vs shopping breakdown */}
+      {slot.status === 'accepted' && status && (
+        <div className={styles.stockSummary} data-testid="stock-breakdown">
+          <p className={styles.stockHeadline}>
+            {status.makeable
+              ? '🟢 You can make this from stock'
+              : '🛒 Needs shopping before you can make it'}
+          </p>
+          <IngredientStates
+            ingredients={status.ingredients}
+            locations={locations}
+            inventoryItems={inventoryItems}
+            onChanged={onIngredientChanged}
+          />
+        </div>
+      )}
+
       {slot.meal && (
         <>
           <p className={styles.detailDesc}>{slot.meal.description}</p>
           {slot.meal.prep_minutes && (
             <p className={styles.detailPrep}>⏱ {slot.meal.prep_minutes} mins</p>
           )}
-          <button
-            className={styles.ingredientsToggle}
-            onClick={() => setShowIngredients(v => !v)}
-          >
-            {showIngredients ? 'Hide ingredients ▲' : `Show ingredients (${slot.meal.ingredients?.length ?? 0}) ▼`}
-          </button>
-          {showIngredients && slot.meal.ingredients?.length > 0 && (
-            <ul className={styles.ingredients}>
-              {slot.meal.ingredients.map((ing, i) => (
-                <li key={i}>{ing.item} <span className={styles.qty}>— {ing.quantity}</span></li>
-              ))}
-            </ul>
+          {/* Raw ingredient list kept for non-accepted meals (no status yet). */}
+          {slot.status !== 'accepted' && (
+            <>
+              <button
+                className={styles.ingredientsToggle}
+                onClick={() => setShowIngredients(v => !v)}
+              >
+                {showIngredients ? 'Hide ingredients ▲' : `Show ingredients (${slot.meal.ingredients?.length ?? 0}) ▼`}
+              </button>
+              {showIngredients && slot.meal.ingredients?.length > 0 && (
+                <ul className={styles.ingredients}>
+                  {slot.meal.ingredients.map((ing, i) => (
+                    <li key={i}>{ing.item} <span className={styles.qty}>— {ing.quantity}</span></li>
+                  ))}
+                </ul>
+              )}
+            </>
           )}
         </>
       )}
@@ -848,26 +1123,74 @@ function MealDetail({ slot, isLoading, isRejecting, rejectReason,
 
 // ─── Lunch ideas (not day-aligned) ────────────────────────────────────────────
 
-function LunchIdeas({ ideas, onAccept, onReject }) {
+function LunchIdeas({ ideas, mealStatus = {}, locations = [], inventoryItems = [], onIngredientChanged, onAccept, onReject, count, onCountChange, onGenerate, generating }) {
   const [rejectingId, setRejectingId] = useState(null)
   const [reason, setReason] = useState('')
 
   return (
     <section className={styles.lunchSection}>
-      <h2 className={styles.lunchHeading}>🥗 Lunch Ideas <span className={styles.lunchSub}>for the week — pick and mix</span></h2>
+      <div className={styles.lunchHeader}>
+        <h2 className={styles.lunchHeading}>🥗 Lunch Ideas <span className={styles.lunchSub}>for the week — pick and mix</span></h2>
+        <div className={styles.lunchControls}>
+          <label className={styles.lunchCountLabel}>
+            How many?
+            <input
+              type="number"
+              min="1"
+              max="10"
+              value={count}
+              onChange={e => onCountChange(Math.max(1, Math.min(10, Number(e.target.value) || 1)))}
+              className={styles.lunchCountInput}
+              disabled={generating}
+              data-testid="lunch-count"
+            />
+          </label>
+          <button
+            className={styles.btnPrimary}
+            onClick={onGenerate}
+            disabled={generating}
+            data-testid="generate-lunches"
+          >
+            {generating ? 'Generating…' : ideas.length ? 'Regenerate lunches' : 'Generate lunches'}
+          </button>
+        </div>
+      </div>
+
+      {ideas.length === 0 ? (
+        <p className={styles.mutedText} data-testid="lunch-empty">
+          No lunch ideas yet. Choose how many and generate them for the week.
+        </p>
+      ) : (
       <div className={styles.lunchGrid}>
-        {ideas.map(idea => (
+        {ideas.map(idea => {
+          const st = mealStatus[idea.id]
+          return (
           <div
             key={idea.id}
             className={`${styles.lunchCard} ${idea.status === 'accepted' ? styles.lunchAccepted : ''}`}
           >
             <div className={styles.lunchTop}>
-              <span className={styles.lunchName}>{idea.name}</span>
+              <span className={styles.lunchName}>
+                {idea.status === 'accepted' && st && (
+                  <span title={st.makeable ? 'Makeable from stock' : 'Needs shopping'}>
+                    {st.makeable ? '🟢 ' : '🛒 '}
+                  </span>
+                )}
+                {idea.name}
+              </span>
               {idea.prep_minutes && <span className={styles.lunchPrep}>⏱ {idea.prep_minutes}m</span>}
             </div>
             <p className={styles.lunchDesc}>{idea.description}</p>
 
-            {idea.ingredients?.length > 0 && (
+            {/* Accepted: inventory/shopping breakdown. Otherwise the plain list. */}
+            {idea.status === 'accepted' && st ? (
+              <IngredientStates
+                ingredients={st.ingredients}
+                locations={locations}
+                inventoryItems={inventoryItems}
+                onChanged={onIngredientChanged}
+              />
+            ) : idea.ingredients?.length > 0 && (
               <ul className={styles.lunchIngredients}>
                 {idea.ingredients.map((ing, i) => (
                   <li key={i}>{ing.item} <span className={styles.qty}>— {ing.quantity}</span></li>
@@ -906,8 +1229,10 @@ function LunchIdeas({ ideas, onAccept, onReject }) {
               </div>
             )}
           </div>
-        ))}
+          )
+        })}
       </div>
+      )}
     </section>
   )
 }

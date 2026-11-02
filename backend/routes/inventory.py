@@ -1,5 +1,6 @@
 from flask import Blueprint, jsonify, request
 import os
+import json
 import uuid
 import requests as http_requests
 from sqlalchemy import select
@@ -335,3 +336,70 @@ def remove_item(item_id):
         if item:
             session.delete(item)
     return jsonify({"ok": True})
+
+
+# ── Receipt scan (photo -> item list via GPT-4o vision) ─────────────────────
+# One photo of a supermarket receipt returns a reviewable list of grocery
+# items. No DB write happens here — the client shows a checklist and the user
+# bulk-adds the kept items via /scan-add. GPT expands abbreviations ("HNZ BNS"
+# -> "Heinz Beans") and drops non-grocery lines (totals, card, VAT).
+RECEIPT_PROMPT = (
+    "You are reading a photo of a UK supermarket till receipt. "
+    "Return ONLY the grocery/food/household items a family would stock at home. "
+    "Expand shop abbreviations into normal names (e.g. 'HNZ BNS 400G' -> "
+    "'Heinz Baked Beans'). Drop everything that is not a stockable item: "
+    "store name, date, totals, subtotal, VAT, change, card/cash lines, "
+    "loyalty points, bag charges, multibuy discount lines. "
+    "Respond with STRICT JSON only, no prose, in this exact shape: "
+    '{"items":[{"name":"Heinz Baked Beans","quantity":2}]}. '
+    "quantity is the number bought (default 1 when the line shows no count)."
+)
+
+
+@inventory_bp.route("/receipt-scan", methods=["POST"])
+def receipt_scan():
+    """Parse a receipt photo into a reviewable item list. Body:
+      {image: "data:image/jpeg;base64,...."}  (a data URL or bare base64).
+    Returns {ok, items:[{name, quantity}]}. Never writes to the DB — the client
+    reviews then bulk-adds. 502 if the OCR/LLM call fails; 400 on bad input."""
+    if not os.environ.get("OPENAI_API_KEY"):
+        return jsonify({"error": "OpenAI not configured"}), 503
+    body = request.get_json(silent=True) or {}
+    image = (body.get("image") or "").strip()
+    if not image:
+        return jsonify({"error": "image required"}), 400
+    # Accept a bare base64 string too — normalise to a data URL for the API.
+    if not image.startswith("data:"):
+        image = "data:image/jpeg;base64," + image
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": RECEIPT_PROMPT},
+                    {"type": "image_url", "image_url": {"url": image, "detail": "high"}},
+                ],
+            }],
+            response_format={"type": "json_object"},
+            max_tokens=1500,
+            temperature=0,
+        )
+        raw = resp.choices[0].message.content or "{}"
+        parsed = json.loads(raw)
+    except Exception as exc:  # noqa: BLE001 — surface a clean error to the UI
+        return jsonify({"error": f"receipt read failed: {exc}"}), 502
+
+    items = []
+    for it in (parsed.get("items") or []):
+        name = (str(it.get("name") or "")).strip()
+        if not name:
+            continue
+        try:
+            qty = max(1, int(it.get("quantity", 1)))
+        except (TypeError, ValueError):
+            qty = 1
+        items.append({"name": name, "quantity": qty})
+    return jsonify({"ok": True, "items": items}), 200

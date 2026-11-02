@@ -8,7 +8,7 @@ from sqlalchemy import select
 from routes.inventory import get_stocked_names, normalise
 from routes.config import family_name
 from db import session_scope
-from models import MealSlot, LunchIdea, MealIngredient
+from models import MealSlot, LunchIdea, MealIngredient, InventoryItem
 from weeks import parse_date
 
 meals_bp = Blueprint("meals", __name__)
@@ -64,6 +64,7 @@ def _lunch_to_dict(l):
     d = dict(_meal_payload(l) or {})
     d["id"] = l.id
     d["status"] = l.status
+    d["week_start"] = l.week_start.isoformat() if l.week_start else None
     d["rejection_reasons"] = l.rejection_reasons or []
     return d
 
@@ -80,8 +81,12 @@ def read_data():
 def _sync_ingredients(owner, meal_dict, *, is_slot):
     """Replace an owner's ingredient rows from a meal dict, PRESERVING the
     stored inventory match + reserved_qty for a line whose (item, quantity) is
-    unchanged. This is what lets write_data update meals in place without losing
-    reservations — the churn bug the old delete-all approach caused."""
+    unchanged — but ONLY while the meal is still accepted. A meal that is no
+    longer accepted (rejected, regenerated, reverted) must not carry its old
+    reservations onto the new rows: doing so left `planned`/`reserved_qty`
+    stranded with no accepted meal behind them (the orphaned-reservation bug).
+    Reservations are rebuilt from the accepted set by recompute_reservations."""
+    keep_res = (getattr(owner, "status", None) == "accepted")
     old_by_key = {(i.item, i.quantity): i for i in list(owner.ingredients)}
     new_ings = (meal_dict or {}).get("ingredients", []) if meal_dict else []
     owner.ingredients.clear()  # delete-orphan removes rows no longer present
@@ -90,11 +95,12 @@ def _sync_ingredients(owner, meal_dict, *, is_slot):
         if not item:
             continue
         quantity = (ing.get("quantity") or "").strip()
-        prev = old_by_key.get((item, quantity))
+        prev = old_by_key.get((item, quantity)) if keep_res else None
         row = MealIngredient(
             id=str(uuid.uuid4()), item=item, quantity=quantity, position=pos,
             inventory_item_id=prev.inventory_item_id if prev else None,
             reserved_qty=prev.reserved_qty if prev else 0,
+            match_locked=prev.match_locked if prev else False,
         )
         owner.ingredients.append(row)
 
@@ -153,14 +159,48 @@ def write_data(data):
             session.flush()
             _sync_ingredients(obj, meal, is_slot=False)
 
+        # Self-heal: drop any reservation not backed by an accepted meal and
+        # rebuild `planned` from the accepted set (deterministic, no GPT).
+        from routes.reservations import heal_orphan_reservations
+        heal_orphan_reservations(session)
+
+def _steering_override(key):
+    """Return the DB-stored override content for a steering key, or None if the
+    user hasn't edited it (so the baked file default is used)."""
+    from models import SteeringDoc
+    with session_scope() as session:
+        row = session.get(SteeringDoc, key)
+        return row.content if row and row.content.strip() else None
+
+
 def load_member_profiles():
+    """Per-member steering. A DB override (key 'member:<id>') wins over the
+    baked familymembers/<file>.md; otherwise the file is used."""
+    from models import Member
     profiles = []
+    # DB-overridden members first (keyed by member id).
+    overridden_files = set()
+    with session_scope() as session:
+        members = session.scalars(select(Member)).all()
+        member_rows = [(m.id, m.markdown_url) for m in members]
+    for mid, md_url in member_rows:
+        override = _steering_override(f"member:{mid}")
+        if override is not None:
+            profiles.append(override)
+            if md_url:
+                overridden_files.add(os.path.basename(md_url))
+    # Then any baked files not overridden.
     for filepath in glob.glob(os.path.join(MEMBERS_DIR, "*.md")):
+        if os.path.basename(filepath) in overridden_files:
+            continue
         with open(filepath, "r", encoding="utf-8") as f:
             profiles.append(f.read())
     return profiles
 
 def load_meal_planning_rules():
+    override = _steering_override("meal_planning")
+    if override is not None:
+        return override
     if os.path.exists(PROMPT_FILE):
         with open(PROMPT_FILE, "r", encoding="utf-8") as f:
             return f.read()
@@ -379,6 +419,74 @@ Return only valid JSON array, no markdown fences, no explanation."""
 def get_current():
     return jsonify(read_data())
 
+
+@meals_bp.route("/status", methods=["GET"])
+def meal_status():
+    """Per-accepted-meal ingredient breakdown for the UI badges + detail.
+
+    For every accepted dinner/lunch, classify each ingredient:
+      - in_stock : matched to inventory and reserved/covered from stock
+      - on_list  : not in stock, but currently on the Todoist shopping list
+      - need     : not in stock and not on any list yet (nothing has it)
+
+    A meal is `makeable` when every ingredient is in_stock. Reuses the
+    reservation engine (no extra GPT spend beyond one recompute) and reads the
+    live Todoist list once. Query: ?use_gpt=0 to force string matching."""
+    from routes.reservations import recompute_reservations
+    from routes.shopping import on_list_norms
+
+    use_gpt = request.args.get("use_gpt", "1") != "0"
+
+    with session_scope() as session:
+        res = recompute_reservations(session, use_gpt=use_gpt)
+
+        # Build per-meal, per-ingredient state from the reservation result.
+        # reserved -> in_stock; unmatched/shortfall -> needs buying.
+        reserved_keys = {(r["meal_key"], normalise(r["name"])) for r in res["reserved"]}
+        # A level item matched (reserved_qty 0 but linked) also counts in_stock;
+        # recompute stores the match on the row, so re-read accepted rows.
+        from routes.reservations import accepted_meal_ingredients
+        from routes.inventory import in_stock as item_in_stock
+        in_stock_rows = set()
+        for meal_key, ing in accepted_meal_ingredients(session):
+            if ing.inventory_item_id is not None:
+                inv = session.get(InventoryItem, ing.inventory_item_id)
+                # count item: reserved_qty>0 means a unit is held for this meal.
+                # level item: counts only if the item is actually in stock.
+                if inv is not None and (
+                    (inv.track_mode == "count" and (ing.reserved_qty or 0) > 0)
+                    or (inv.track_mode == "level" and item_in_stock(inv))
+                ):
+                    in_stock_rows.add((meal_key, normalise(ing.item)))
+
+        on_list = on_list_norms()
+
+        # Gather each accepted meal's ingredient list (name order).
+        meals = {}
+        dinners = session.scalars(select(MealSlot).where(MealSlot.status == "accepted")).all()
+        lunches = session.scalars(select(LunchIdea).where(LunchIdea.status == "accepted")).all()
+
+        def classify(meal_key, name):
+            key = (meal_key, normalise(name))
+            if key in reserved_keys or key in in_stock_rows:
+                return "in_stock"
+            if normalise(name) in on_list:
+                return "on_list"
+            return "need"
+
+        for owner in list(dinners) + list(lunches):
+            ings = []
+            for ing in sorted(owner.ingredients, key=lambda i: i.position):
+                if not ing.item:
+                    continue
+                ings.append({"id": ing.id, "name": ing.item, "quantity": ing.quantity,
+                             "state": classify(owner.id, ing.item)})
+            makeable = bool(ings) and all(i["state"] == "in_stock" for i in ings)
+            meals[owner.id] = {"makeable": makeable, "ingredients": ings}
+
+    return jsonify({"meals": meals})
+
+
 @meals_bp.route("/generate", methods=["POST"])
 def generate():
     data = read_data()
@@ -423,18 +531,6 @@ def generate():
                 slot["status"] = "generated"
 
     # Generate lunch ideas if we don't have any yet
-    if not data.get("lunch_ideas"):
-        lunch_raw = _call_openai(build_lunch_prompt(count=3))
-        data["lunch_ideas"] = [
-            {
-                "id": str(uuid.uuid4()),
-                "status": "generated",  # generated | accepted | skipped
-                "rejection_reasons": [],
-                **idea,
-            }
-            for idea in lunch_raw
-        ]
-
     if not pending and data.get("lunch_ideas"):
         # Nothing pending and lunches already exist
         write_data(data)
@@ -445,6 +541,45 @@ def generate():
 
 # ── Lunch idea routes ──────────────────────────────────────────────────────────
 
+@meals_bp.route("/lunch/generate", methods=["POST"])
+def generate_lunches():
+    """Generate lunch ideas for the week, independent of dinners.
+
+    Body: {count?: int} (default 3, clamped 1..10). Accepted lunches are KEPT;
+    all non-accepted ones are replaced so the week ends up with `count` fresh
+    ideas on top of whatever is already accepted. Rejection reasons already
+    gathered steer the new ideas away from past rejects."""
+    body = request.get_json(silent=True) or {}
+    try:
+        count = int(body.get("count", 3))
+    except (TypeError, ValueError):
+        count = 3
+    count = max(1, min(10, count))
+
+    data = read_data()
+    kept = [l for l in data.get("lunch_ideas", []) if l.get("status") == "accepted"]
+    # Steer away from anything previously rejected.
+    prior_reasons = [r for l in data.get("lunch_ideas", [])
+                     for r in l.get("rejection_reasons", [])]
+
+    fresh_raw = _call_openai(
+        build_lunch_prompt(count=count, rejection_reasons=prior_reasons or None)
+    )
+    fresh = [
+        {
+            "id": str(uuid.uuid4()),
+            "status": "generated",  # generated | accepted | skipped
+            "rejection_reasons": [],
+            **idea,
+        }
+        for idea in fresh_raw
+    ]
+
+    data["lunch_ideas"] = kept + fresh
+    write_data(data)
+    return jsonify(data)
+
+
 @meals_bp.route("/lunch/<lunch_id>/accept", methods=["POST"])
 def accept_lunch(lunch_id):
     data = read_data()
@@ -452,6 +587,25 @@ def accept_lunch(lunch_id):
         if idea["id"] == lunch_id:
             idea["status"] = "accepted"
             write_data(data)
+            from routes.reservations import meal_draft_lines
+            with session_scope() as session:
+                draft = meal_draft_lines(session, lunch_id)
+            return jsonify({"idea": idea, "draft": draft["draft"],
+                            "used_gpt": draft["used_gpt"]})
+    return jsonify({"error": "Lunch idea not found"}), 404
+
+@meals_bp.route("/lunch/<lunch_id>/unaccept", methods=["POST"])
+def unaccept_lunch(lunch_id):
+    """Revert an accepted lunch back to 'generated' (review panel cancelled),
+    then reconcile the shopping list."""
+    data = read_data()
+    for idea in data["lunch_ideas"]:
+        if idea["id"] == lunch_id:
+            if idea["status"] == "accepted":
+                idea["status"] = "generated"
+                write_data(data)
+                from routes.shopping import reconcile_auto_items
+                reconcile_auto_items()
             return jsonify(idea)
     return jsonify({"error": "Lunch idea not found"}), 404
 
@@ -465,6 +619,7 @@ def reject_lunch(lunch_id):
     if not idea:
         return jsonify({"error": "Lunch idea not found"}), 404
 
+    was_accepted = idea.get("status") == "accepted"
     # Collect all prior rejection reasons across lunch ideas to steer away
     all_reasons = idea.get("rejection_reasons", []) + ([reason] if reason else [])
 
@@ -479,9 +634,191 @@ def reject_lunch(lunch_id):
         idx = data["lunch_ideas"].index(idea)
         data["lunch_ideas"][idx] = new_idea
         write_data(data)
+        # Rejecting an accepted lunch means its items may no longer be needed.
+        if was_accepted:
+            from routes.shopping import reconcile_auto_items
+            reconcile_auto_items()
         return jsonify(new_idea)
 
     return jsonify({"error": "Could not regenerate"}), 500
+
+# ── Ingredient-level editing (correct a meal's inventory/shopping links) ─────
+# All operate on ONE MealIngredient row, then recompute reservations so
+# `planned` stays honest, and return the refreshed per-meal status so the UI
+# can re-render the ✅/🛒/⚠️ breakdown without a separate round-trip.
+
+def _ingredient_owner_key(ing):
+    return ing.slot_id or ing.lunch_id
+
+
+def _meal_status_for(session, meal_key, *, use_gpt=False):
+    """Recompute, then build the one meal's ingredient breakdown (same shape as
+    /status) so an edit returns fresh state. Reads the live Todoist list once."""
+    from routes.reservations import recompute_reservations, accepted_meal_ingredients
+    from routes.shopping import on_list_norms
+    from routes.inventory import in_stock as item_in_stock
+
+    res = recompute_reservations(session, use_gpt=use_gpt)
+    reserved_keys = {(r["meal_key"], normalise(r["name"])) for r in res["reserved"]}
+    in_stock_rows = set()
+    for mk, ing in accepted_meal_ingredients(session):
+        if ing.inventory_item_id is not None:
+            inv = session.get(InventoryItem, ing.inventory_item_id)
+            if inv is not None and (
+                (inv.track_mode == "count" and (ing.reserved_qty or 0) > 0)
+                or (inv.track_mode == "level" and item_in_stock(inv))
+            ):
+                in_stock_rows.add((mk, normalise(ing.item)))
+    on_list = on_list_norms()
+
+    owner = session.get(MealSlot, meal_key) or session.get(LunchIdea, meal_key)
+    if owner is None:
+        return None
+
+    def classify(name):
+        key = (meal_key, normalise(name))
+        if key in reserved_keys or key in in_stock_rows:
+            return "in_stock"
+        if normalise(name) in on_list:
+            return "on_list"
+        return "need"
+
+    ings = []
+    for ing in sorted(owner.ingredients, key=lambda i: i.position):
+        if ing.item:
+            ings.append({"id": ing.id, "name": ing.item, "quantity": ing.quantity,
+                         "state": classify(ing.item)})
+    makeable = bool(ings) and all(i["state"] == "in_stock" for i in ings)
+    return {"meal_key": meal_key, "makeable": makeable, "ingredients": ings}
+
+
+@meals_bp.route("/ingredient/<ing_id>/match", methods=["POST"])
+def ingredient_match(ing_id):
+    """Link an ingredient to an EXISTING inventory item the family has.
+    Body: {inventory_item_id}. Recomputes so a count item reserves a unit."""
+    body = request.get_json(silent=True) or {}
+    inv_id = (body.get("inventory_item_id") or "").strip()
+    with session_scope() as session:
+        ing = session.get(MealIngredient, ing_id)
+        if ing is None:
+            return jsonify({"error": "ingredient not found"}), 404
+        if not session.get(InventoryItem, inv_id):
+            return jsonify({"error": "inventory item not found"}), 404
+        ing.inventory_item_id = inv_id
+        ing.reserved_qty = 0  # recompute will set the real reservation
+        ing.match_locked = True
+        session.flush()
+        meal_key = _ingredient_owner_key(ing)
+        status = _meal_status_for(session, meal_key)
+    return jsonify({"ok": True, "status": status})
+
+
+@meals_bp.route("/ingredient/<ing_id>/unmatch", methods=["POST"])
+def ingredient_unmatch(ing_id):
+    """Clear a wrong inventory match — the ingredient becomes 'needed'."""
+    with session_scope() as session:
+        ing = session.get(MealIngredient, ing_id)
+        if ing is None:
+            return jsonify({"error": "ingredient not found"}), 404
+        ing.inventory_item_id = None
+        ing.reserved_qty = 0
+        ing.match_locked = True
+        session.flush()
+        meal_key = _ingredient_owner_key(ing)
+        status = _meal_status_for(session, meal_key)
+    return jsonify({"ok": True, "status": status})
+
+
+@meals_bp.route("/ingredient/<ing_id>/add-to-inventory", methods=["POST"])
+def ingredient_add_to_inventory(ing_id):
+    """The family HAS this but it wasn't tracked — create the inventory item
+    (or fold into an existing same-name one), link it, recompute.
+    Body: {location?, track_mode?, count?}."""
+    from routes.inventory import restock_or_add, LOCATIONS, TRACK_MODES
+    body = request.get_json(silent=True) or {}
+    location = (body.get("location") or "pantry").strip()
+    if location not in LOCATIONS:
+        return jsonify({"error": f"invalid location '{location}'"}), 400
+    track_mode = (body.get("track_mode") or "count").strip()
+    if track_mode not in TRACK_MODES:
+        return jsonify({"error": f"invalid track_mode '{track_mode}'"}), 400
+    try:
+        count = max(1, int(body.get("count", 1)))
+    except (TypeError, ValueError):
+        return jsonify({"error": "count must be an integer"}), 400
+    with session_scope() as session:
+        ing = session.get(MealIngredient, ing_id)
+        if ing is None:
+            return jsonify({"error": "ingredient not found"}), 404
+        item, _action = restock_or_add(session, ing.item, location,
+                                       track_mode=track_mode, count=count)
+        ing.inventory_item_id = item.id
+        ing.reserved_qty = 0
+        ing.match_locked = True
+        session.flush()
+        meal_key = _ingredient_owner_key(ing)
+        status = _meal_status_for(session, meal_key)
+    return jsonify({"ok": True, "status": status})
+
+
+@meals_bp.route("/ingredient/<ing_id>/consume", methods=["POST"])
+def ingredient_consume(ing_id):
+    """The family used this item outside a meal: decrement the matched count
+    item by `qty` (default 1) and release that many reservations, then
+    recompute. Body: {qty?}. Only meaningful for a matched count item."""
+    body = request.get_json(silent=True) or {}
+    try:
+        qty = max(1, int(body.get("qty", 1)))
+    except (TypeError, ValueError):
+        qty = 1
+    with session_scope() as session:
+        ing = session.get(MealIngredient, ing_id)
+        if ing is None:
+            return jsonify({"error": "ingredient not found"}), 404
+        inv = session.get(InventoryItem, ing.inventory_item_id) if ing.inventory_item_id else None
+        if inv is None or inv.track_mode != "count":
+            return jsonify({"error": "not a matched count item"}), 400
+        inv.count = max(0, (inv.count or 0) - qty)
+        inv.planned = max(0, (inv.planned or 0) - qty)
+        if inv.planned > inv.count:
+            inv.planned = inv.count
+        session.flush()
+        meal_key = _ingredient_owner_key(ing)
+        status = _meal_status_for(session, meal_key)
+    return jsonify({"ok": True, "consumed": qty, "remaining": inv.count, "status": status})
+
+
+@meals_bp.route("/ingredient/<ing_id>/to-shopping", methods=["POST"])
+def ingredient_to_shopping(ing_id):
+    """Put this one ingredient on the Todoist shopping list now (auto item).
+    Skips if it's already on the list (manual or auto)."""
+    from routes.shopping import _headers, _get_or_create_project, AUTO_LABEL, TODOIST
+    from models import ShoppingItem
+    headers = _headers()
+    if not headers:
+        return jsonify({"error": "TODOIST_API_TOKEN not set"}), 500
+    with session_scope() as session:
+        ing = session.get(MealIngredient, ing_id)
+        if ing is None:
+            return jsonify({"error": "ingredient not found"}), 404
+        name, quantity = ing.item, ing.quantity
+        norm = normalise(name)
+        already = session.scalars(select(ShoppingItem).where(ShoppingItem.norm == norm)).first()
+        meal_key = _ingredient_owner_key(ing)
+        if already is None:
+            project_id = _get_or_create_project(headers)
+            content = f"{name} — {quantity}".strip(" —")
+            r = http_requests.post(
+                f"{TODOIST}/tasks", headers=headers,
+                json={"content": content, "project_id": project_id, "labels": [AUTO_LABEL]},
+                timeout=10)
+            r.raise_for_status()
+            session.add(ShoppingItem(id=str(uuid.uuid4()), name=name, norm=norm,
+                                     quantity=quantity or "", source="auto",
+                                     todoist_id=r.json()["id"]))
+        status = _meal_status_for(session, meal_key)
+    return jsonify({"ok": True, "status": status})
+
 
 @meals_bp.route("/<slot_id>/accept", methods=["POST"])
 def accept(slot_id):
@@ -490,6 +827,26 @@ def accept(slot_id):
         if slot["id"] == slot_id:
             slot["status"] = "accepted"
             write_data(data)
+            from routes.reservations import meal_draft_lines
+            with session_scope() as session:
+                draft = meal_draft_lines(session, slot_id)
+            return jsonify({"slot": slot, "draft": draft["draft"],
+                            "used_gpt": draft["used_gpt"]})
+    return jsonify({"error": "Slot not found"}), 404
+
+@meals_bp.route("/<slot_id>/unaccept", methods=["POST"])
+def unaccept(slot_id):
+    """Revert an accepted dinner back to 'generated' (the user cancelled the
+    shopping-review panel). Reconcile so any items this meal added are pulled
+    back off the list unless another accepted meal still needs them."""
+    data = read_data()
+    for slot in data["slots"]:
+        if slot["id"] == slot_id:
+            if slot["status"] == "accepted":
+                slot["status"] = "generated"
+                write_data(data)
+                from routes.shopping import reconcile_auto_items
+                reconcile_auto_items()
             return jsonify(slot)
     return jsonify({"error": "Slot not found"}), 404
 
@@ -514,9 +871,15 @@ def skip(slot_id):
     data = read_data()
     for slot in data["slots"]:
         if slot["id"] == slot_id:
+            was_accepted = slot["status"] == "accepted"
             slot["status"] = "skipped"
             slot["meal"] = None
             write_data(data)
+            # If a previously-accepted meal is skipped, pull its now-unneeded
+            # items off the shopping list (reconcile keeps ones still needed).
+            if was_accepted:
+                from routes.shopping import reconcile_auto_items
+                reconcile_auto_items()
             return jsonify(slot)
     return jsonify({"error": "Slot not found"}), 404
 
@@ -530,6 +893,7 @@ def reject(slot_id):
     if not slot:
         return jsonify({"error": "Slot not found"}), 404
 
+    was_accepted = slot["status"] == "accepted"
     slot["rejection_reasons"].append(reason)
     slot["status"] = "pending"
     slot["meal"] = None
@@ -541,6 +905,10 @@ def reject(slot_id):
         slot["status"] = "generated"
 
     write_data(data)
+    # Rejecting an accepted meal means its items may no longer be needed.
+    if was_accepted:
+        from routes.shopping import reconcile_auto_items
+        reconcile_auto_items()
     return jsonify(slot)
 
 @meals_bp.route("/calendar-test", methods=["GET"])

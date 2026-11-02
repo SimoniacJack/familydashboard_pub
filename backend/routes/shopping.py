@@ -54,6 +54,29 @@ def _tasks_in_project(headers, project_id):
     return tasks.get("results", tasks) if isinstance(tasks, dict) else tasks
 
 
+def on_list_norms():
+    """Normalised names of items currently on the Todoist shopping list (auto +
+    manual + Google-Home additions). Reads through to Todoist so it reflects the
+    live list. Returns a set; empty on any failure so callers degrade gracefully
+    (an unknown list is treated as 'nothing on the list')."""
+    headers = _headers()
+    if not headers:
+        return set()
+    try:
+        project_id = _get_or_create_project(headers)
+        tasks = _tasks_in_project(headers, project_id)
+    except http_requests.RequestException:
+        return set()
+    norms = set()
+    for t in tasks:
+        content = (t.get("content") or "")
+        # Todoist content may be "Name — quantity"; match on the name part.
+        name = content.split("—")[0].strip() if "—" in content else content.strip()
+        if name:
+            norms.add(normalise(name))
+    return norms
+
+
 def _required_ingredients():
     """Ingredients needed by accepted meals, minus what's in inventory, PLUS
     tracked staples that are running low/out (regardless of meals).
@@ -144,14 +167,14 @@ def remove_item(item_id):
     return jsonify({"ok": True})
 
 
-@shopping_bp.route("/update", methods=["POST"])
-def update_list():
-    """Reconcile the auto portion of the master list against current needs.
+def reconcile_auto_items():
+    """Reconcile the auto portion of the shopping list against current needs.
     Manual items are preserved. Auto items are added/removed to match
-    required-minus-inventory."""
+    required-minus-inventory. Returns {added, removed} or None if no Todoist
+    token is configured (so callers can no-op silently)."""
     headers = _headers()
     if not headers:
-        return jsonify({"error": "TODOIST_API_TOKEN not set"}), 500
+        return None
 
     required = _required_ingredients()  # {norm: ingredient}
     project_id = _get_or_create_project(headers)
@@ -190,6 +213,20 @@ def update_list():
             ))
             added.append(ing["item"])
 
+    return {"added": added, "removed": removed}
+
+
+@shopping_bp.route("/update", methods=["POST"])
+def update_list():
+    """Reconcile the auto portion of the master list against current needs.
+    Manual items are preserved. Auto items are added/removed to match
+    required-minus-inventory."""
+    headers = _headers()
+    if not headers:
+        return jsonify({"error": "TODOIST_API_TOKEN not set"}), 500
+
+    result = reconcile_auto_items()
+    added, removed = result["added"], result["removed"]
     return jsonify({
         "project": PROJECT_NAME,
         "added": added,

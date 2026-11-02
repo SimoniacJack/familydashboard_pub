@@ -35,7 +35,10 @@ def get_week():
     # The Monday this meal plan covers (if any) — used by the frontend to jump to it
     meal_week_start = None
     if slots:
-        meal_week_start = min(s["date"] for s in slots)
+        earliest = min(s["date"] for s in slots)
+        # Normalise to that week's Monday (dinners can sit mid-week).
+        _e = datetime.strptime(earliest, "%Y-%m-%d")
+        meal_week_start = (_e - timedelta(days=_e.weekday())).strftime("%Y-%m-%d")
 
     # One request for the whole week's events, bucketed by date
     events_by_date = fetch_calendar_range(first_date.strftime("%Y-%m-%d"), 7)
@@ -57,15 +60,27 @@ def get_week():
             "slots": slots_by_date.get(date_str, []),
         })
 
-    # Lunch ideas belong to the meal-plan week; only surface them when viewing it
-    viewing_meal_week = meal_week_start is not None and meal_week_start == first_date.strftime("%Y-%m-%d")
+    # Lunch ideas belong to a week via their own week_start — surface them when
+    # the week being viewed matches, independent of whether dinners exist that
+    # week (dinners can sit mid-week; lunches are standalone). We compare by the
+    # Monday of each, so a lunch on this week's Monday shows when viewing it.
+    viewing_monday = first_date.strftime("%Y-%m-%d")
+    all_lunches = data.get("lunch_ideas", [])
+    week_lunches = [
+        l for l in all_lunches
+        if (l.get("week_start") or meal_week_start) == viewing_monday
+    ]
+    # Fallback: if no lunch carries a week_start (legacy rows), fall back to the
+    # old behaviour of tying them to the dinner week, so they are never lost.
+    if not week_lunches and all_lunches and all(not l.get("week_start") for l in all_lunches):
+        week_lunches = all_lunches if (meal_week_start == viewing_monday) else []
 
     return jsonify({
         "week_start": first_date.strftime("%Y-%m-%d"),
         "this_week_start": this_monday().strftime("%Y-%m-%d"),
         "meal_week_start": meal_week_start,
         "days": days,
-        "lunch_ideas": data.get("lunch_ideas", []) if viewing_meal_week else [],
+        "lunch_ideas": week_lunches,
         "generated_at": data.get("generated_at"),
         "has_slots": any(d["slots"] for d in days),
     })

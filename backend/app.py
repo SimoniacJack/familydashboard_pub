@@ -14,6 +14,7 @@ from routes.assignments import assignments_bp
 from routes.shopping import shopping_bp
 from routes.auth import auth_bp, is_authed
 from routes.config import config_bp
+from routes.steering import steering_bp
 
 # Local dev loads secrets from git.env; in a container/EC2 they come from the
 # environment (populated from AWS Secrets Manager). load_dotenv is a no-op if
@@ -77,6 +78,7 @@ app.register_blueprint(reminders_bp, url_prefix="/api/reminders")
 app.register_blueprint(inventory_bp, url_prefix="/api/inventory")
 app.register_blueprint(assignments_bp, url_prefix="/api/assignments")
 app.register_blueprint(shopping_bp, url_prefix="/api/shopping")
+app.register_blueprint(steering_bp, url_prefix="/api/steering")
 
 
 @app.route("/api/health")

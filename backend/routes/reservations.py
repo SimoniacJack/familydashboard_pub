@@ -157,13 +157,18 @@ def recompute_reservations(session, *, use_gpt=True, client=None, per_unit=1):
     count_items = [i for i in items if i.track_mode == "count"]
 
     # 1. Clear every ingredient's reservation + match, and reset planned to 0.
+    #    EXCEPT match_locked rows: a human set/cleared those, so keep their
+    #    inventory_item_id (their reserved_qty is recomputed below from scratch).
     for _mk, ing in accepted_meal_ingredients(session):
         ing.reserved_qty = 0
-        ing.inventory_item_id = None
-    # also clear any reservations left on non-accepted meals' rows
+        if not getattr(ing, "match_locked", False):
+            ing.inventory_item_id = None
+    # also clear any reservations left on non-accepted meals' rows (locked too:
+    # a non-accepted meal holds no reservation regardless)
     for ing in session.scalars(select(MealIngredient)).all():
         ing.reserved_qty = 0
-        ing.inventory_item_id = None
+        if not getattr(ing, "match_locked", False):
+            ing.inventory_item_id = None
     for i in count_items:
         i.planned = 0
     session.flush()
@@ -172,8 +177,12 @@ def recompute_reservations(session, *, use_gpt=True, client=None, per_unit=1):
     if not pairs:
         return {"reserved": [], "shortfalls": [], "unmatched": [], "used_gpt": False}
 
+    items_by_id = {i.id: i for i in items}
+
     # 2. Match ingredient names -> inventory items (batched, dedup names).
-    unique_names = list({ing.item for _mk, ing in pairs})
+    #    Locked rows skip the matcher entirely — their match is the human's.
+    unique_names = list({ing.item for _mk, ing in pairs
+                         if not getattr(ing, "match_locked", False)})
     matches, used_gpt = match_ingredients(unique_names, items, use_gpt=use_gpt, client=client)
 
     reserved, shortfalls, unmatched = [], [], []
@@ -183,7 +192,13 @@ def recompute_reservations(session, *, use_gpt=True, client=None, per_unit=1):
 
     for meal_key, ing in pairs:
         name = ing.item
-        match = matches.get(name)
+        locked = getattr(ing, "match_locked", False)
+        # Locked: honour the human's decision — use its stored match (or no
+        # match if they unmatched it), never the matcher.
+        if locked:
+            match = items_by_id.get(ing.inventory_item_id) if ing.inventory_item_id else None
+        else:
+            match = matches.get(name)
         if match is None:
             unmatched.append({"meal_key": meal_key, "item": name,
                               "quantity": ing.quantity})
@@ -216,6 +231,85 @@ def recompute_reservations(session, *, use_gpt=True, client=None, per_unit=1):
     session.flush()
     return {"reserved": reserved, "shortfalls": shortfalls,
             "unmatched": unmatched, "used_gpt": used_gpt}
+
+
+def meal_draft_lines(session, meal_key, *, use_gpt=True, client=None):
+    """Draft shopping lines for ONE accepted meal.
+
+    Recomputes all reservations (idempotent, keeps the global tally correct),
+    then returns only the lines belonging to `meal_key` — its unmatched
+    ingredients and count-item shortfalls — de-duplicated by normalised name.
+    Used when a single meal is accepted so the user reviews just that meal's
+    missing items before they hit the shopping list. Writes nothing to Todoist.
+    """
+    res = recompute_reservations(session, use_gpt=use_gpt, client=client)
+    draft = {}
+
+    def add_line(name, quantity, reason):
+        norm = normalise(name)
+        if norm and norm not in draft:
+            draft[norm] = {"name": name, "quantity": quantity or "", "reason": reason}
+
+    for u in res["unmatched"]:
+        if u["meal_key"] == meal_key:
+            add_line(u["item"], u.get("quantity", ""), "not in inventory")
+    for s in res["shortfalls"]:
+        if s["meal_key"] == meal_key:
+            add_line(s["item"], "", "short in stock")
+
+    lines = sorted(draft.values(), key=lambda d: d["name"].lower())
+    return {"draft": lines, "used_gpt": res["used_gpt"]}
+
+
+def heal_orphan_reservations(session):
+    """Deterministically drop reservations that no accepted meal justifies, and
+    rebuild each count item's `planned` as the exact sum of reserved_qty on
+    ACCEPTED meals' ingredient rows. No GPT, no matching — safe to call on every
+    write_data. This is the self-heal for the orphaned-reservation bug: a
+    reservation carried onto a non-accepted meal, or any reserved_qty on a level
+    item, is zeroed here. Returns {cleared_rows, items_fixed}."""
+    accepted_ids = set(
+        session.scalars(select(MealSlot.id).where(MealSlot.status == "accepted")).all()
+    ) | set(
+        session.scalars(select(LunchIdea.id).where(LunchIdea.status == "accepted")).all()
+    )
+
+    cleared_rows = 0
+    for ing in session.scalars(select(MealIngredient)).all():
+        owner_id = ing.slot_id or ing.lunch_id
+        backed = owner_id in accepted_ids
+        item = session.get(InventoryItem, ing.inventory_item_id) if ing.inventory_item_id else None
+        # Valid only if backed by an accepted meal AND pointing at a count item.
+        valid = backed and item is not None and item.track_mode == "count"
+        if not valid and (ing.reserved_qty or ing.inventory_item_id):
+            ing.reserved_qty = 0
+            # Respect a human lock: keep the chosen match link even when the
+            # meal isn't currently accepted, so it sticks on re-accept. Only an
+            # unlocked (auto) link is cleared here.
+            if (not backed or item is None) and not getattr(ing, "match_locked", False):
+                ing.inventory_item_id = None
+            cleared_rows += 1
+    session.flush()
+
+    # Rebuild planned from the surviving accepted, count-backed reservations.
+    tally = {}
+    for ing in session.scalars(select(MealIngredient)).all():
+        owner_id = ing.slot_id or ing.lunch_id
+        if ing.reserved_qty and ing.inventory_item_id and owner_id in accepted_ids:
+            tally[ing.inventory_item_id] = tally.get(ing.inventory_item_id, 0) + ing.reserved_qty
+
+    items_fixed = 0
+    for i in session.scalars(select(InventoryItem)).all():
+        want = tally.get(i.id, 0) if i.track_mode == "count" else 0
+        if i.track_mode != "count":
+            want = 0
+        if (i.planned or 0) != want:
+            i.planned = want
+            items_fixed += 1
+        if i.planned > (i.count or 0):
+            i.planned = i.count or 0
+    session.flush()
+    return {"cleared_rows": cleared_rows, "items_fixed": items_fixed}
 
 
 def consume_meal(session, meal_key):

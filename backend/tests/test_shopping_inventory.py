@@ -234,3 +234,248 @@ def test_scan_add_untracked_existing_is_noop(client):
     inv = client.get("/api/inventory/").get_json()
     toms = [i for loc in inv["items"].values() for i in loc if i["name"] == "Chopped Tomatoes"]
     assert len(toms) == 1 and toms[0]["count"] == 3
+
+
+# ── Per-meal accept → draft of that meal's unmatched ingredients ────────────
+
+def _seed_dinner(status="generated"):
+    """Seed one dinner slot with two ingredients via write_data."""
+    import routes.meals as meals
+    meals.write_data({
+        "slots": [{
+            "id": "d1", "date": "2026-11-02", "status": status,
+            "rejection_reasons": [],
+            "meal": {"name": "Pasta Bake", "description": "",
+                     "ingredients": [
+                         {"item": "Pasta", "quantity": "500g"},
+                         {"item": "Cheddar", "quantity": "200g"},
+                     ]},
+        }],
+        "lunch_ideas": [], "generated_at": None,
+    })
+
+
+def test_accept_dinner_returns_per_meal_draft(client, monkeypatch):
+    # No GPT: deterministic string matching. Nothing in inventory -> both
+    # ingredients are unmatched and come back as draft lines for THIS meal only.
+    import routes.reservations as reservations
+    monkeypatch.setattr(reservations, "match_ingredients",
+                        lambda names, items, **k: ({n: None for n in names}, False))
+    _seed_dinner()
+    r = client.post("/api/meals/d1/accept")
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["slot"]["status"] == "accepted"
+    names = sorted(line["name"] for line in body["draft"])
+    assert names == ["Cheddar", "Pasta"]
+
+
+def test_accept_dinner_draft_empty_when_stocked(client, monkeypatch):
+    # Both ingredients match inventory -> draft is empty (stock covers it).
+    import routes.reservations as reservations
+    _add_inv(client, "Pasta", location="pantry", track_mode="count", count=2)
+    _add_inv(client, "Cheddar", location="fridge_inside", track_mode="count", count=2)
+    inv_by_name = {}
+    with dbmod.session_scope() as s:
+        for it in s.query(models.InventoryItem).all():
+            inv_by_name[it.name.lower()] = it.id
+    monkeypatch.setattr(
+        reservations, "match_ingredients",
+        lambda names, items, **k: (
+            {n: next((i for i in items if i.name.lower() == n.lower()), None) for n in names},
+            False,
+        ),
+    )
+    _seed_dinner()
+    r = client.post("/api/meals/d1/accept")
+    assert r.status_code == 200
+    assert r.get_json()["draft"] == []
+
+
+def test_reject_accepted_dinner_reconciles(client, monkeypatch):
+    # Accepting then rejecting a dinner triggers a reconcile so its items drop.
+    import routes.reservations as reservations
+    monkeypatch.setattr(reservations, "match_ingredients",
+                        lambda names, items, **k: ({n: None for n in names}, False))
+    monkeypatch.setattr("routes.meals._call_openai", lambda *a, **k: [])
+    called = {"reconcile": 0}
+    import routes.shopping as shopmod
+    orig = shopmod.reconcile_auto_items
+    monkeypatch.setattr(shopmod, "reconcile_auto_items",
+                        lambda: (called.__setitem__("reconcile", called["reconcile"] + 1), orig())[1])
+    _seed_dinner()
+    client.post("/api/meals/d1/accept")
+    r = client.post("/api/meals/d1/reject", json={"reason": "no"})
+    assert r.status_code == 200
+    assert called["reconcile"] == 1  # reconcile ran because it was accepted
+
+
+# ── Standalone lunch generation ─────────────────────────────────────────────
+
+def test_generate_lunches_count_and_keeps_accepted(client, monkeypatch):
+    # Seed one accepted lunch directly, then generate 2 fresh ones. The accepted
+    # one survives; the result holds accepted + count fresh = 3.
+    import routes.meals as meals
+    meals.write_data({
+        "slots": [],
+        "lunch_ideas": [{
+            "id": "keep-1", "status": "accepted", "rejection_reasons": [],
+            "name": "Keep Me", "description": "", "ingredients": [],
+        }],
+        "generated_at": None,
+    })
+    # Stub the LLM: return `count` placeholder ideas.
+    monkeypatch.setattr(
+        meals, "_call_openai",
+        lambda prompt, **k: [{"name": f"Lunch {i}", "description": "", "ingredients": []}
+                             for i in range(2)],
+    )
+    r = client.post("/api/meals/lunch/generate", json={"count": 2})
+    assert r.status_code == 200
+    lunches = r.get_json()["lunch_ideas"]
+    assert len(lunches) == 3  # 1 accepted kept + 2 fresh
+    assert any(l["id"] == "keep-1" and l["status"] == "accepted" for l in lunches)
+    assert sum(1 for l in lunches if l["status"] == "generated") == 2
+
+
+def test_generate_lunches_clamps_count(client, monkeypatch):
+    import routes.meals as meals
+    meals.write_data({"slots": [], "lunch_ideas": [], "generated_at": None})
+    captured = {}
+
+    def fake_prompt(count=3, rejection_reasons=None):
+        captured["count"] = count
+        return "prompt"
+    monkeypatch.setattr(meals, "build_lunch_prompt", fake_prompt)
+    monkeypatch.setattr(meals, "_call_openai", lambda prompt, **k: [])
+
+    client.post("/api/meals/lunch/generate", json={"count": 99})
+    assert captured["count"] == 10  # clamped to max
+
+
+# ── Cancelling the review panel reverts the accept ──────────────────────────
+
+def test_unaccept_dinner_reverts_status(client, monkeypatch):
+    # Accept then unaccept (review cancelled) -> status back to 'generated'.
+    import routes.reservations as reservations
+    monkeypatch.setattr(reservations, "match_ingredients",
+                        lambda names, items, **k: ({n: None for n in names}, False))
+    _seed_dinner()
+    client.post("/api/meals/d1/accept")
+    r = client.post("/api/meals/d1/unaccept")
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "generated"
+
+
+def test_unaccept_lunch_reverts_status(client):
+    import routes.meals as meals
+    meals.write_data({
+        "slots": [],
+        "lunch_ideas": [{
+            "id": "l1", "status": "accepted", "rejection_reasons": [],
+            "name": "Soup", "description": "", "ingredients": [],
+        }],
+        "generated_at": None,
+    })
+    r = client.post("/api/meals/lunch/l1/unaccept")
+    assert r.status_code == 200
+    assert r.get_json()["status"] == "generated"
+
+
+# ── Receipt scan (photo -> item list via mocked GPT-4o vision) ──────────────
+
+def test_receipt_scan_parses_items(client, monkeypatch):
+    import routes.inventory as inv
+
+    # Fake the OpenAI client so no network/key is needed.
+    class _Msg:
+        content = '{"items":[{"name":"Heinz Baked Beans","quantity":2},{"name":"Milk","quantity":1}]}'
+    class _Choice:
+        message = _Msg()
+    class _Resp:
+        choices = [_Choice()]
+    class _Completions:
+        def create(self, **k): return _Resp()
+    class _Chat:
+        completions = _Completions()
+    class _FakeClient:
+        def __init__(self, **k): self.chat = _Chat()
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setattr(inv, "OpenAI", _FakeClient, raising=False)
+    # inventory.py imports OpenAI lazily inside the view; patch the module ref.
+    import openai
+    monkeypatch.setattr(openai, "OpenAI", _FakeClient)
+
+    r = client.post("/api/inventory/receipt-scan",
+                    json={"image": "data:image/jpeg;base64,AAAA"})
+    assert r.status_code == 200
+    items = r.get_json()["items"]
+    names = sorted(i["name"] for i in items)
+    assert names == ["Heinz Baked Beans", "Milk"]
+    beans = next(i for i in items if i["name"] == "Heinz Baked Beans")
+    assert beans["quantity"] == 2
+
+
+def test_receipt_scan_requires_image(client, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    r = client.post("/api/inventory/receipt-scan", json={})
+    assert r.status_code == 400
+
+
+def test_receipt_scan_no_key(client, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    r = client.post("/api/inventory/receipt-scan",
+                    json={"image": "data:image/jpeg;base64,AAAA"})
+    assert r.status_code == 503
+
+
+def test_scan_add_folds_same_name(client):
+    # Scanning the same item twice increments count, not a duplicate row.
+    client.post("/api/inventory/scan-add",
+                json={"name": "Beans", "location": "pantry", "track_mode": "count", "count": 2})
+    r = client.post("/api/inventory/scan-add",
+                    json={"name": "beans", "location": "pantry", "track_mode": "count", "count": 1})
+    assert r.status_code == 201
+    body = r.get_json()
+    assert body["action"] == "incremented"
+    assert body["item"]["count"] == 3
+
+
+# ── Steering editor (backlog #6) ────────────────────────────────────────────
+
+def test_steering_save_and_revert(client):
+    # List returns the meal_planning doc (baked default, not overridden).
+    r = client.get("/api/steering/")
+    assert r.status_code == 200
+    docs = {d["key"]: d for d in r.get_json()["docs"]}
+    assert "meal_planning" in docs
+    assert docs["meal_planning"]["overridden"] is False
+
+    # Save an override.
+    r = client.put("/api/steering/meal_planning", json={"content": "Only vegan meals."})
+    assert r.status_code == 200
+    assert r.get_json()["overridden"] is True
+
+    # It now reads back as overridden with the new content.
+    docs = {d["key"]: d for d in client.get("/api/steering/").get_json()["docs"]}
+    assert docs["meal_planning"]["overridden"] is True
+    assert docs["meal_planning"]["content"] == "Only vegan meals."
+
+    # The meal loader now returns the override.
+    import routes.meals as meals
+    assert meals.load_meal_planning_rules() == "Only vegan meals."
+
+    # Revert drops the override.
+    r = client.delete("/api/steering/meal_planning")
+    assert r.status_code == 200
+    docs = {d["key"]: d for d in client.get("/api/steering/").get_json()["docs"]}
+    assert docs["meal_planning"]["overridden"] is False
+
+
+def test_steering_empty_content_reverts(client):
+    client.put("/api/steering/meal_planning", json={"content": "temp"})
+    # Saving empty content is treated as a revert.
+    r = client.put("/api/steering/meal_planning", json={"content": "   "})
+    assert r.status_code == 200
+    assert r.get_json()["overridden"] is False

@@ -32,6 +32,37 @@ export default function BarcodeScanner({ locations, defaultLocation, onClose, on
   const [restock, setRestock] = useState('')
   const [manualName, setManualName] = useState('')
   const [added, setAdded] = useState([]) // running list of "name (action)"
+  const [rapid, setRapid] = useState(false) // continuous mode: auto-add known items, no confirm
+  const [receipt, setReceipt] = useState(false) // receipt-photo mode
+  const [receiptStatus, setReceiptStatus] = useState('idle') // idle | reading | review | error
+  const [receiptErr, setReceiptErr] = useState('')
+  const [receiptItems, setReceiptItems] = useState([]) // [{name, quantity, keep}]
+
+  // handleBarcode is a stable useCallback; rapid mode and the current location
+  // are read via refs so the decode callback always sees the latest values.
+  const rapidRef = useRef(rapid)
+  const locationRef = useRef(location)
+  useEffect(() => { rapidRef.current = rapid }, [rapid])
+  useEffect(() => { locationRef.current = location }, [location])
+
+  // Add a found item directly (count 1, scan location) — the continuous path.
+  const autoAdd = useCallback(async (name) => {
+    const finalName = (name || '').trim()
+    if (!finalName) return
+    const loc = locationRef.current
+    try {
+      const res = await fetch(`${API}/scan-add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: finalName, location: loc, track_mode: 'count', count: 1 }),
+      })
+      const data = await res.json()
+      const verb = data.action === 'restocked' ? 'restocked'
+        : data.action === 'incremented' ? 'added to' : 'added to'
+      setAdded(a => [`${finalName} — ${verb} ${LOCATION_LABELS[loc] || loc}`, ...a])
+      onAdded?.(data)
+    } catch { /* lookup/add failure just skips this beep */ }
+  }, [onAdded])
 
   const handleBarcode = useCallback(async (code) => {
     const now = Date.now()
@@ -42,18 +73,23 @@ export default function BarcodeScanner({ locations, defaultLocation, onClose, on
     try {
       const res = await fetch(`${API}/lookup/${encodeURIComponent(code)}`)
       const data = await res.json()
-      setPending({
-        barcode: code,
-        name: data.found ? (data.brand ? `${data.name} (${data.brand})` : data.name) : '',
-        found: !!data.found,
-      })
+      const found = !!data.found
+      const name = found ? (data.brand ? `${data.name} (${data.brand})` : data.name) : ''
+      // Continuous mode: a recognised item is added straight away, no card.
+      // An unrecognised code still stops for a name — we can't auto-add a blank.
+      if (rapidRef.current && found) {
+        await autoAdd(name)
+        setStatus('scanning')
+        return
+      }
+      setPending({ barcode: code, name, found })
     } catch {
       setPending({ barcode: code, name: '', found: false })
     }
-  }, [])
+  }, [autoAdd])
 
   useEffect(() => {
-    if (manual) return
+    if (manual || receipt) return
     let cancelled = false
     const reader = new BrowserMultiFormatReader()
     readerRef.current = reader
@@ -82,7 +118,7 @@ export default function BarcodeScanner({ locations, defaultLocation, onClose, on
       cancelled = true
       try { controlsRef.current?.stop() } catch { /* already stopped */ }
     }
-  }, [manual, handleBarcode])
+  }, [manual, receipt, handleBarcode])
 
   async function confirmAdd(name) {
     const finalName = (name || '').trim()
@@ -111,6 +147,71 @@ export default function BarcodeScanner({ locations, defaultLocation, onClose, on
     if (!manual) setStatus('scanning')
   }
 
+  // Receipt mode: read the chosen photo, send to the OCR endpoint, show a
+  // reviewable checklist. Nothing is saved until the user confirms.
+  async function onReceiptFile(e) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // allow re-picking the same file
+    if (!file) return
+    setReceiptErr(''); setReceiptStatus('reading')
+    try {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(fr.result)
+        fr.onerror = () => reject(fr.error)
+        fr.readAsDataURL(file)
+      })
+      const res = await fetch(`${API}/receipt-scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: dataUrl }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setReceiptErr(data.error || 'Could not read the receipt.')
+        setReceiptStatus('error')
+        return
+      }
+      const items = (data.items || []).map(it => ({
+        name: it.name, quantity: it.quantity || 1, keep: true,
+      }))
+      if (items.length === 0) {
+        setReceiptErr('No items found on that photo — try a clearer shot.')
+        setReceiptStatus('error')
+        return
+      }
+      setReceiptItems(items)
+      setReceiptStatus('review')
+    } catch {
+      setReceiptErr('Could not read that image.')
+      setReceiptStatus('error')
+    }
+  }
+
+  function setReceiptItem(idx, patch) {
+    setReceiptItems(list => list.map((it, i) => i === idx ? { ...it, ...patch } : it))
+  }
+
+  async function addReceiptItems() {
+    const keep = receiptItems.filter(it => it.keep && it.name.trim())
+    for (const it of keep) {
+      try {
+        const res = await fetch(`${API}/scan-add`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: it.name.trim(), location,
+            track_mode: 'count', count: Math.max(1, parseInt(it.quantity, 10) || 1),
+          }),
+        })
+        const data = await res.json()
+        setAdded(a => [`${it.name.trim()} — added to ${LOCATION_LABELS[location] || location}`, ...a])
+        onAdded?.(data)
+      } catch { /* skip a failed line, keep going */ }
+    }
+    setReceiptItems([]); setReceiptStatus('idle')
+  }
+
   return (
     <div className={styles.overlay} data-testid="scanner">
       <div className={styles.panel}>
@@ -121,23 +222,111 @@ export default function BarcodeScanner({ locations, defaultLocation, onClose, on
 
         <div className={styles.modeRow}>
           <button
-            className={!manual ? styles.modeActive : styles.modeBtn}
-            onClick={() => setManual(false)}
+            className={(!manual && !receipt) ? styles.modeActive : styles.modeBtn}
+            onClick={() => { setManual(false); setReceipt(false) }}
           >Barcode</button>
           <button
+            className={receipt ? styles.modeActive : styles.modeBtn}
+            onClick={() => { setReceipt(true); setManual(false); try { controlsRef.current?.stop() } catch { /* noop */ } }}
+            data-testid="scanner-receipt"
+          >Receipt</button>
+          <button
             className={manual ? styles.modeActive : styles.modeBtn}
-            onClick={() => { setManual(true); try { controlsRef.current?.stop() } catch { /* noop */ } }}
+            onClick={() => { setManual(true); setReceipt(false); try { controlsRef.current?.stop() } catch { /* noop */ } }}
             data-testid="scanner-manual"
           >Manual</button>
         </div>
 
-        {!manual && (
+        {/* Receipt mode: pick/snap a photo, review the parsed items, bulk-add */}
+        {receipt && (
+          <div className={styles.confirm} data-testid="receipt-panel">
+            <label className={styles.field}>
+              File into
+              <select value={location} onChange={e => setLocation(e.target.value)}>
+                {locations.map(l => <option key={l} value={l}>{LOCATION_LABELS[l] || l}</option>)}
+              </select>
+            </label>
+
+            {receiptStatus !== 'review' && (
+              <>
+                <label className={styles.addBtn} style={{ textAlign: 'center', cursor: 'pointer' }}>
+                  📄 {receiptStatus === 'reading' ? 'Reading…' : 'Take / choose a receipt photo'}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    style={{ display: 'none' }}
+                    disabled={receiptStatus === 'reading'}
+                    onChange={onReceiptFile}
+                    data-testid="receipt-file"
+                  />
+                </label>
+                <p className={styles.notFound}>
+                  One photo of your till receipt → a list you tick and add. Items all go to the location above.
+                </p>
+                {receiptStatus === 'error' && <p className={styles.notFound} style={{ color: 'var(--color-danger)' }}>{receiptErr}</p>}
+              </>
+            )}
+
+            {receiptStatus === 'review' && (
+              <>
+                <p className={styles.foundName}>{receiptItems.filter(i => i.keep).length} of {receiptItems.length} items selected</p>
+                <ul className={styles.addedList} style={{ maxHeight: '45vh' }}>
+                  {receiptItems.map((it, idx) => (
+                    <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '2px 0' }}>
+                      <input
+                        type="checkbox"
+                        checked={it.keep}
+                        onChange={e => setReceiptItem(idx, { keep: e.target.checked })}
+                      />
+                      <input
+                        className={styles.input}
+                        style={{ flex: 1 }}
+                        value={it.name}
+                        onChange={e => setReceiptItem(idx, { name: e.target.value })}
+                      />
+                      <input
+                        type="number"
+                        min="1"
+                        className={styles.input}
+                        style={{ width: '3.2rem' }}
+                        value={it.quantity}
+                        onChange={e => setReceiptItem(idx, { quantity: e.target.value })}
+                      />
+                    </li>
+                  ))}
+                </ul>
+                <div className={styles.actions}>
+                  <button className={styles.addBtn} onClick={addReceiptItems} data-testid="receipt-add">
+                    Add selected
+                  </button>
+                  <button className={styles.skipBtn} onClick={() => { setReceiptItems([]); setReceiptStatus('idle') }}>
+                    Discard
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {!manual && !receipt && (
+          <label className={styles.checkRow} data-testid="rapid-toggle">
+            <input
+              type="checkbox"
+              checked={rapid}
+              onChange={e => setRapid(e.target.checked)}
+            />
+            Continuous — add recognised items instantly, no tap (count 1 each)
+          </label>
+        )}
+
+        {!manual && !receipt && (
           <div className={styles.videoWrap}>
             <video ref={videoRef} className={styles.video} muted playsInline />
             <div className={styles.reticle} />
             <div className={styles.status}>
               {status === 'starting' && 'Starting camera…'}
-              {status === 'scanning' && 'Point a barcode at the camera'}
+              {status === 'scanning' && (rapid ? 'Continuous — scan items one after another' : 'Point a barcode at the camera')}
               {status === 'resolving' && 'Looking up…'}
               {status === 'error' && errorMsg}
             </div>

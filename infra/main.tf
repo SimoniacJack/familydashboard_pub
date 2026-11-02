@@ -88,6 +88,27 @@ resource "aws_ecr_repository" "app" {
   }
 }
 
+# Keep only the most recent images so old deploys don't accumulate. Each deploy
+# pushes a SHA-tagged image plus 'latest'; rollback uses the immediately-prior
+# tag, so retaining 10 leaves ample rollback history while capping storage.
+resource "aws_ecr_lifecycle_policy" "app" {
+  repository = aws_ecr_repository.app.name
+  policy = jsonencode({
+    rules = [
+      {
+        rulePriority = 1
+        description  = "Keep only the last ${var.ecr_keep_images} images"
+        selection = {
+          tagStatus   = "any"
+          countType   = "imageCountMoreThan"
+          countNumber = var.ecr_keep_images
+        }
+        action = { type = "expire" }
+      }
+    ]
+  })
+}
+
 # ── Secrets Manager: all app secrets in one JSON secret ──────────────────────
 resource "aws_secretsmanager_secret" "app" {
   name                    = "${var.project}/app-secrets"

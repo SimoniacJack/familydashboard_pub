@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import CalendarView from './pages/CalendarView.jsx'
 import FoodTab from './pages/FoodTab.jsx'
+import SteeringTab from './pages/SteeringTab.jsx'
 import Login from './components/Login.jsx'
 import Nav from './components/Nav.jsx'
 import styles from './App.module.css'
 
 const TABS = [
-  { id: 'home', label: '🏡 Home' },
-  { id: 'food', label: '🍴 Food' },
+  { id: 'home', label: '📅 Calendar' },
+  { id: 'food', label: '🍴 Inventory' },
+  { id: 'steering', label: '⚙️ Steering' },
 ]
 
 export default function App() {
@@ -52,7 +54,7 @@ export default function App() {
     <div className={styles.app}>
       <Nav tabs={TABS} active={tab} onChange={setTab} onLogout={logout} familyName={familyName} />
       <div className={styles.tabBody}>
-        {tab === 'home' ? <CalendarView /> : <FoodTab />}
+        {tab === 'home' ? <CalendarView /> : tab === 'food' ? <FoodTab /> : <SteeringTab />}
       </div>
     </div>
   )

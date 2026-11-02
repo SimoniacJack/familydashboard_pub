@@ -882,6 +882,45 @@
   font-weight: 600;
 }
 
+.lunchHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.lunchControls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.lunchCountLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.lunchCountInput {
+  width: 3.4rem;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.lunchCountInput:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
 .lunchSub {
   font-family: var(--font-body);
   font-size: 0.8rem;
@@ -1100,4 +1139,167 @@
   .weekScrollBtn {
     width: 34px;
   }
+
+  /* Lunches: one horizontal scrolling row on phone, not a vertical stack */
+  .lunchGrid {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    padding-bottom: 0.4rem;
+  }
+  .lunchCard {
+    flex: 0 0 82%;
+    width: 82%;
+    scroll-snap-align: start;
+  }
+}
+
+/* ── Inventory vs shopping: meal chip badge + ingredient state tags ────────── */
+.chipBadge {
+  margin-left: 4px;
+  font-size: 0.85em;
+  line-height: 1;
+}
+
+.stockSummary {
+  margin: 0.5rem 0 0.75rem;
+  padding: 0.6rem 0.7rem;
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.stockHeadline {
+  margin: 0 0 0.5rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+.stateList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.stateItem {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-left: 3px solid var(--color-border);
+}
+
+.stateInStock { border-left-color: var(--color-success, #2e9e5b); }
+.stateOnList  { border-left-color: var(--color-primary); }
+.stateNeed    { border-left-color: var(--color-danger, #d9534f); }
+
+.stateIcon { flex: 0 0 auto; }
+
+.stateName {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.clearPlanRow {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.6rem;
+}
+
+/* ── Meal detail modal (replaces the inline side panel) ────────────────────── */
+.mealModalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 60;
+}
+
+.mealModalInner {
+  width: 100%;
+  max-width: 440px;
+  max-height: 88vh;
+  overflow-y: auto;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* The panel fills the modal: drop the side-panel's fixed width/height. */
+.mealModalInner .detailPanel {
+  width: 100%;
+  max-height: none;
+  box-shadow: none;
+  border-radius: var(--radius);
+}
+
+@media (max-width: 768px) {
+  .mealModalInner { max-width: 100%; max-height: 90vh; }
+}
+
+/* ── Ingredient action menu (edit inventory/shopping link) ─────────────────── */
+.stateItem { flex-direction: column; align-items: stretch; }
+
+.stateRow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+}
+
+.stateMenuBtn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.2rem;
+}
+.stateMenuBtn:hover { color: var(--color-text); }
+
+.stateActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.4rem;
+}
+
+.stateAction {
+  background: var(--color-surface-alt);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+.stateAction:hover { border-color: var(--color-primary); }
+
+.statePicker {
+  display: flex;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+  width: 100%;
+}
+.statePicker select {
+  flex: 1;
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 0.78rem;
 }

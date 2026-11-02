@@ -217,6 +217,20 @@ class SyncState(Base):
     value: Mapped[str] = mapped_column(String(300), default="")
 
 
+class SteeringDoc(Base):
+    """User-editable steering content (meal-planning prompt, per-member
+    likes/dislikes). Baked files remain the DEFAULT; a row here OVERRIDES the
+    file for that key, so the Steering tab's edits persist across deploys
+    (the files are baked into the image and would otherwise be read-only/lost).
+    key: 'meal_planning' or 'member:<member_id>'. Deleting the row reverts to
+    the baked default."""
+    __tablename__ = "steering_docs"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class MealIngredient(Base):
     """One ingredient line of a meal — extracted from the old `meal.ingredients`
     JSON array into its own relational row.
@@ -255,6 +269,10 @@ class MealIngredient(Base):
     # Units this ingredient has reserved from the matched count item (0 for
     # level items or unmatched lines). Folds in the old MealReservation.qty.
     reserved_qty: Mapped[int] = mapped_column(Integer, default=0)
+    # True once a human manually set or cleared this line's inventory match
+    # (via the ingredient-edit actions). recompute_reservations then RESPECTS
+    # the human decision instead of re-deriving the match from the matcher.
+    match_locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
     slot: Mapped["MealSlot | None"] = relationship(back_populates="ingredients")
     lunch: Mapped["LunchIdea | None"] = relationship(back_populates="ingredients")

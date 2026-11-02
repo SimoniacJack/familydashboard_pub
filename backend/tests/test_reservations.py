@@ -232,3 +232,106 @@ def test_level_match_stored_without_reserving_units(ctx):
         # level item: match stored, but no discrete units reserved.
         assert row.inventory_item_id is not None
         assert row.reserved_qty == 0
+
+
+# ── Orphaned-reservation bug: reject/regenerate must not strand `planned` ────
+
+def test_reject_accepted_meal_clears_planned(ctx):
+    import routes.meals as meals
+    with dbmod.session_scope() as s:
+        iid = _inv(s, "Chopped Tomatoes", count=2, mode="count")
+        _meal(s, "m1", [{"item": "chopped tomatoes", "quantity": "1 tin"}], status="accepted")
+        resv.recompute_reservations(s, use_gpt=False)
+        assert s.get(InventoryItem, iid).planned == 1  # reserved by the accepted meal
+
+    # Reject the meal: write_data with status flipped to 'generated'.
+    meals.write_data({
+        "slots": [{
+            "id": "m1", "date": "2026-11-02", "meal_type": "dinner",
+            "status": "generated",
+            "meal": {"name": "Test", "ingredients": [{"item": "chopped tomatoes", "quantity": "1 tin"}]},
+            "rejection_reasons": [],
+        }],
+        "lunch_ideas": [],
+    })
+
+    with dbmod.session_scope() as s:
+        # No accepted meal now -> planned back to 0, no stranded reservation.
+        assert s.get(InventoryItem, iid).planned == 0
+        assert _reserved_rows(s) == 0
+
+
+def test_heal_zeroes_level_item_and_unmatched_reservation(ctx):
+    with dbmod.session_scope() as s:
+        # A level item wrongly carrying planned, and an accepted meal row with a
+        # reserved_qty but no inventory link — both must be healed to 0.
+        lvl = InventoryItem(id="lvl1", name="Butter", location="pantry",
+                            track_mode="level", count=2, planned=1, level="full")
+        s.add(lvl)
+        _meal(s, "m1", [{"item": "baking potatoes", "quantity": "4"}], status="accepted")
+        s.flush()
+        row = s.query(MealIngredient).filter_by(slot_id="m1").first()
+        row.reserved_qty = 1  # reserved against nothing
+        row.inventory_item_id = None
+        s.flush()
+
+        resv.heal_orphan_reservations(s)
+
+        assert s.get(InventoryItem, "lvl1").planned == 0  # level never planned
+        assert _reserved_rows(s) == 0  # the item-less reservation cleared
+
+
+# ── Ingredient-level editing (backlog #2) ───────────────────────────────────
+
+def test_ingredient_match_then_unmatch(ctx):
+    with dbmod.session_scope() as s:
+        iid = _inv(s, "Chopped Tomatoes", count=2, mode="count")
+        _meal(s, "m1", [{"item": "chopped tomatoes", "quantity": "1 tin"}], status="accepted")
+        ing_id = s.query(MealIngredient).filter_by(slot_id="m1").first().id
+
+    # Match -> count item reserves a unit; the lock makes it survive recompute.
+    r = ctx.post(f"/api/meals/ingredient/{ing_id}/match",
+                 json={"inventory_item_id": iid})
+    assert r.status_code == 200
+    assert r.get_json()["status"]["ingredients"][0]["state"] == "in_stock"
+    with dbmod.session_scope() as s:
+        assert s.get(InventoryItem, iid).planned == 1
+
+    # Unmatch -> becomes needed, planned released, and the lock stops recompute
+    # re-linking it even though the names string-match.
+    r = ctx.post(f"/api/meals/ingredient/{ing_id}/unmatch")
+    assert r.status_code == 200
+    assert r.get_json()["status"]["ingredients"][0]["state"] in ("need", "on_list")
+    with dbmod.session_scope() as s:
+        assert s.get(InventoryItem, iid).planned == 0
+
+
+def test_ingredient_consume_decrements_by_qty(ctx):
+    with dbmod.session_scope() as s:
+        iid = _inv(s, "Eggs", count=12, mode="count")
+        _meal(s, "m1", [{"item": "eggs", "quantity": "2"}], status="accepted")
+        ing_id = s.query(MealIngredient).filter_by(slot_id="m1").first().id
+    ctx.post(f"/api/meals/ingredient/{ing_id}/match", json={"inventory_item_id": iid})
+
+    # Consume 3 outside a meal.
+    r = ctx.post(f"/api/meals/ingredient/{ing_id}/consume", json={"qty": 3})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body["consumed"] == 3
+    with dbmod.session_scope() as s:
+        assert s.get(InventoryItem, iid).count == 9
+
+
+def test_ingredient_add_to_inventory_creates_and_links(ctx):
+    with dbmod.session_scope() as s:
+        _meal(s, "m1", [{"item": "pine nuts", "quantity": "50g"}], status="accepted")
+        ing_id = s.query(MealIngredient).filter_by(slot_id="m1").first().id
+
+    r = ctx.post(f"/api/meals/ingredient/{ing_id}/add-to-inventory",
+                 json={"location": "pantry", "track_mode": "count", "count": 1})
+    assert r.status_code == 200
+    with dbmod.session_scope() as s:
+        row = s.query(MealIngredient).filter_by(slot_id="m1").first()
+        assert row.inventory_item_id is not None
+        inv = s.get(InventoryItem, row.inventory_item_id)
+        assert inv.name == "pine nuts"
