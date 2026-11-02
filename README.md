@@ -75,3 +75,16 @@ development:
 
 > Forking this? Replace the handle above with your own Buy Me a Coffee handle (from your BMC page
 > URL, e.g. `buymeacoffee.com/janedoe` → `janedoe`).
+
+## Install as an app (PWA)
+
+The dashboard is a Progressive Web App, so it installs straight from the browser
+— no app store, no download.
+
+- **Android (Chrome):** open the site, tap the ⋮ menu → **Add to Home screen**
+  (or accept the install prompt). It launches fullscreen with its own icon.
+- **iOS (Safari):** open the site, tap **Share** → **Add to Home Screen**.
+- **Desktop (Chrome/Edge):** an install icon appears in the address bar.
+
+Installing requires the site be served over HTTPS (the bundled Caddy setup does
+this). The app shell works offline; live data still needs the backend reachable.
